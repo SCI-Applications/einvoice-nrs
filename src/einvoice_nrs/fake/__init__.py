@@ -65,7 +65,11 @@ def _ok(data: Any) -> JSONResponse:
 
 def create_app(config: Config) -> FastAPI:
     app = FastAPI(title="Fake NRS")
-    businesses = {b.business_id: b for b in config.businesses}
+
+    def business(business_id: object) -> Business | None:
+        # Looked up on every call, so a test can add businesses to the config later.
+        return next((b for b in config.businesses if b.business_id == business_id), None)
+
     failures = [f.model_copy() for f in config.failures]
     signed: set[str] = set()
     app.state.calls = []  # (operation, body) for tests to inspect
@@ -87,7 +91,7 @@ def create_app(config: Config) -> FastAPI:
         return None
 
     def check_invoice(body: dict[str, Any]) -> JSONResponse | None:
-        if body.get("business_id") not in businesses:
+        if business(body.get("business_id")) is None:
             return _error(404, "business not found")
         if not IRN.match(str(body.get("irn", ""))):
             return _error(400, "invalid irn")
@@ -101,22 +105,22 @@ def create_app(config: Config) -> FastAPI:
     async def entity(business_id: str, request: Request) -> JSONResponse:
         if failed := await gate(request, "entity"):
             return failed
-        business = businesses.get(business_id)
-        if business is None:
+        found = business(business_id)
+        if found is None:
             return _error(404, "entity not found")
-        return _ok({"id": business.business_id, "tin": business.tin, "name": business.name})
+        return _ok({"id": found.business_id, "tin": found.tin, "name": found.name})
 
     @app.post("/api/v1/invoice/irn/validate")
     async def irn_validate(request: Request) -> JSONResponse:
         if failed := await gate(request, "irn_validate"):
             return failed
         body = await request.json()
-        business = businesses.get(body.get("business_id"))
-        if business is None:
+        found = business(body.get("business_id"))
+        if found is None:
             return _error(404, "business not found")
         irn = str(body.get("irn", ""))
         match = IRN.match(irn)
-        if match is None or match["service_id"] != business.service_id:
+        if match is None or match["service_id"] != found.service_id:
             return _error(400, "invalid irn")
         if body.get("invoice_reference") != match["number"]:
             return _error(400, "invoice_reference does not match the irn")
