@@ -1,0 +1,15 @@
+{
+  "api_key": "fake-nrs-key",
+  "api_secret": "fake-nrs-secret",
+  "businesses": [
+    {
+      "business_id": "7d3e1f20-8a4b-4c6d-9e0f-1a2b3c4d5e6f",
+      "tin": "12345678-0001",
+      "name": "Acme Trading Ltd",
+      "service_id": "94ND90NR"
+    }
+  ],
+  "reject_irns": [],
+  "failures": [],
+  "delay_seconds": 0
+}
