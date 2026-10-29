@@ -1,0 +1,62 @@
+{
+  "codes_version": "2026-10-29-6d1b1e1a",
+  "fetched_at": "2026-10-29T13:17:05+00:00",
+  "lists": {
+    "countries": {
+      "count": 249,
+      "endpoint": "countries",
+      "sha256": "2eac90c7a9ea28028407989aef167dd3389a9e71f800a5fc8d6835080d99f5b0"
+    },
+    "currencies": {
+      "count": 118,
+      "endpoint": "currencies",
+      "sha256": "89c02b66af2862f21a4af04e78a6a1a72c8f7b57bd548a60cc45da63341ccd5d"
+    },
+    "hs_codes": {
+      "count": 5612,
+      "endpoint": "hs-codes",
+      "sha256": "4edb62cad02d592bcfa8e285978f002d6c86c66442fce4db80f2ea1fcf8dbc4f"
+    },
+    "invoice_quantity_codes": {
+      "count": 2162,
+      "endpoint": "invoice-quantity-codes",
+      "sha256": "e2d2ee72a9a0cd0a3a942907d808d825d467d4aef39d22598085663cb034aabf"
+    },
+    "invoice_types": {
+      "count": 20,
+      "endpoint": "invoice-types",
+      "sha256": "a55b8b4bb029bdf1646136afaf84035afbcb4c586a25a025bc6824e0fe1fdf57"
+    },
+    "lgas": {
+      "count": 776,
+      "endpoint": "lgas",
+      "sha256": "73a3b3761c327f72d7264a07ebb04d89b1563d65ff3e6e8369ed0e2ebaf24c9f"
+    },
+    "payment_means": {
+      "count": 12,
+      "endpoint": "payment-means",
+      "sha256": "3eb94686a0498d5a977ef971835e2344a15ccbf79c5fa73cb4bbacfb3cf204ff"
+    },
+    "services_codes": {
+      "count": 419,
+      "endpoint": "services-codes",
+      "sha256": "f0ace45b5a0fe0128b3ae7426c0fb2ece67eab7aad1ba193beb729cc851e9a65"
+    },
+    "states": {
+      "count": 37,
+      "endpoint": "states",
+      "sha256": "7b58a4edb8d8cda7ac5f6b0fbc96f804d63764d5778e016b67248752ddd28e39"
+    },
+    "tax_categories": {
+      "count": 27,
+      "endpoint": "tax-categories",
+      "sha256": "b4470a8fe137128ec4f30469fd9abcad0d33f6fcf0737584ccf2173b2ecfa6d1"
+    },
+    "vat_exemptions": {
+      "count": 236,
+      "endpoint": "vat-exemptions",
+      "sha256": "93ca8d6879b6cdff65283548eaec4103a47f7075dd81f7776c6d818779acf814"
+    }
+  },
+  "source": "https://eivc-k6z6d.ondigitalocean.app"
+}

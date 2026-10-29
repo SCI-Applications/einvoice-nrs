@@ -1,0 +1,14 @@
+[
+{"code":"10","value":"Cash"},
+{"code":"20","value":"Cheque"},
+{"code":"30","value":"Credit Transfer"},
+{"code":"31","value":"Debit Transfer"},
+{"code":"42","value":"ACH Credit"},
+{"code":"43","value":"ACH Debit"},
+{"code":"48","value":"Bank Card"},
+{"code":"49","value":"Direct Debit"},
+{"code":"50","value":"Credit Card"},
+{"code":"58","value":"Banker's Draft"},
+{"code":"97","value":"Other"},
+{"code":"ZZZ","value":"Mutually Defined"}
+]
