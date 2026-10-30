@@ -106,7 +106,13 @@ class Probe:
 
 def _invoice(business_id: str, irn: str, tin: str, issue_date: str) -> dict[str, Any]:
     """A correct invoice (our maths rules hold); the variants each break one rule."""
-    address = {"street_name": "12 Marina Rd", "city_name": "Lagos", "country": "NG"}
+    # postal_zone is required for the seller (run 4, 2026-10-30).
+    address = {
+        "street_name": "12 Marina Rd",
+        "city_name": "Lagos",
+        "postal_zone": "101001",
+        "country": "NG",
+    }
     return {
         "business_id": business_id,
         "irn": irn,
@@ -168,6 +174,9 @@ def _variants(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
         del i["accounting_supplier_party"]["postal_address"]
         del i["accounting_customer_party"]["postal_address"]
 
+    def buyer_without_postal_zone(i: dict[str, Any]) -> None:
+        del i["accounting_customer_party"]["postal_address"]["postal_zone"]
+
     def bad_total(i: dict[str, Any]) -> None:
         i["legal_monetary_total"]["payable_amount"] = "1000.00"
 
@@ -198,6 +207,7 @@ def _variants(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         "validate: correct invoice (baseline)": base,
         "validate: no postal addresses": changed(no_addresses),
+        "validate: buyer without postal_zone": changed(buyer_without_postal_zone),
         "validate: payable doesn't add up": changed(bad_total),
         "validate: tax rounded down, not half up": changed(rounding),
         "validate: discount_rate without discount_amount": changed(discount_rate_only),
