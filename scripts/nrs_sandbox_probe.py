@@ -35,6 +35,22 @@ SANDBOX = "https://eivc-k6z6d.ondigitalocean.app"
 ALLOWED_HOSTS = {"eivc-k6z6d.ondigitalocean.app", "127.0.0.1", "localhost"}
 LAGOS = timezone(timedelta(hours=1))
 DEFAULT_REPORT = Path.home() / "nrs-probe-report.json"
+PLACEHOLDER_BUSINESS_ID = "00000000-0000-4000-8000-000000000000"
+PLACEHOLDER_SERVICE_ID = "PRB00001"
+# The first run (2026-10-30) got an empty list from ?size=10&page=1; try other shapes too.
+ENTITY_LISTS = [
+    ("?size=10&page=1", "/entity?size=10&page=1"),
+    ("(no query)", "/entity"),
+    ("?size=10&page=0", "/entity?size=10&page=0"),
+    (
+        "?size=100&page=1, sorted",
+        "/entity?size=100&page=1&sort_by=created_at&sort_direction_desc=true",
+    ),
+]
+
+
+def _label(step: str, placeholder: bool) -> str:
+    return f"{step} (made-up business)" if placeholder else step
 
 
 def _find(data: Any, *names: str) -> Any:
@@ -209,52 +225,55 @@ async def run(args: argparse.Namespace) -> int:
     ) as http:
         probe = Probe(http)
         await probe.call("health", "GET", args.base_url.rstrip("/") + "/api")
-        listing = await probe.call(
-            "entity list (businesses our key can see)", "GET", "/entity?size=10&page=1"
+        business_id = args.business_id
+        for label, path in ENTITY_LISTS:
+            listing = await probe.call(f"entity list {label}", "GET", path)
+            business_id = business_id or _find(listing, "id")
+        placeholder = not business_id
+        if placeholder:
+            # Nothing to work with: carry on with made-up ids, to learn NRS's error format and
+            # what it checks first. These steps are labelled "(made-up business)".
+            print("No business id found; continuing with a made-up business to learn the errors.")
+            business_id = PLACEHOLDER_BUSINESS_ID
+        entity = await probe.call(
+            _label("entity detail", placeholder), "GET", f"/entity/{business_id}"
         )
-        business_id = args.business_id or _find(listing, "id")
-        if not business_id:
-            print("No business id found in the entity list; pass --business-id. Stopping.")
-            return _save(probe, args.out)
-        entity = await probe.call("entity detail", "GET", f"/entity/{business_id}")
         tin = args.tin or _find(entity, "tin") or "UNKNOWN-TIN"
-        service_id = args.service_id or _find(entity, "service")
+        service_id = args.service_id or _find(entity, "service") or PLACEHOLDER_SERVICE_ID
+        placeholder = placeholder or service_id == PLACEHOLDER_SERVICE_ID
 
         today = datetime.now(UTC).astimezone(LAGOS).date()
         issue_date = today.isoformat()
-        if not service_id:
-            print("No Service ID found; pass --service-id to run the IRN and validate steps.")
-            return _save(probe, args.out)
         number = "PROBE" + datetime.now(UTC).strftime("%H%M%S")
         irn = f"{number}-{service_id}-{today:%Y%m%d}"
         validate_irn = "/invoice/irn/validate"
         body = {"business_id": business_id, "irn": irn}
         await probe.call(
-            "irn/validate: invoice_reference = invoice number",
+            _label("irn/validate: invoice_reference = invoice number", placeholder),
             "POST",
             validate_irn,
             {**body, "invoice_reference": number},
         )
         await probe.call(
-            "irn/validate: invoice_reference = whole IRN",
+            _label("irn/validate: invoice_reference = whole IRN", placeholder),
             "POST",
             validate_irn,
             {**body, "invoice_reference": irn},
         )
         await probe.call(
-            "irn/validate: wrong Service ID",
+            _label("irn/validate: wrong Service ID", placeholder),
             "POST",
             validate_irn,
             {**body, "irn": f"{number}-ZZZZ9999-{today:%Y%m%d}", "invoice_reference": number},
         )
         await probe.call(
-            "irn/validate: wrong format",
+            _label("irn/validate: wrong format", placeholder),
             "POST",
             validate_irn,
             {**body, "irn": "not-an-irn", "invoice_reference": number},
         )
         for step, invoice in _variants(_invoice(business_id, irn, tin, issue_date)).items():
-            await probe.call(step, "POST", "/invoice/validate", invoice)
+            await probe.call(_label(step, placeholder), "POST", "/invoice/validate", invoice)
     return _save(probe, args.out)
 
 
