@@ -148,3 +148,39 @@ def test_fake_rejects_string_amounts() -> None:
 
 def test_credentials_never_show_in_repr() -> None:
     assert "fake-nrs-secret" not in repr(KEYS)
+
+
+def test_nrs_errors_give_details_and_the_nrs_error_id() -> None:
+    with pytest.raises(NrsRejectedError) as error:
+        run(lambda nrs: nrs.validate_irn("INV2026001", BUSINESS.business_id, "inv1-94nd90nr-1"))
+    assert str(error.value) == "invalid irn"  # NRS's `details`, not its generic public_message
+    assert error.value.error_id
+
+
+def test_nrs_shaped_error_body_is_read() -> None:
+    def nrs_style(request: httpx2.Request) -> httpx2.Response:
+        # Copied from the sandbox (probe run 2, 2026-10-30).
+        return httpx2.Response(
+            400,
+            json={
+                "code": 400,
+                "data": None,
+                "message": "error has occurred",
+                "error": {
+                    "id": "5c751690-d344-4272-a1be-095442c8e650",
+                    "handler": "invoice_actions",
+                    "details": "this business does not exist",
+                    "public_message": "validation failed: we are unable to process your "
+                    "request. also confirm this is not a duplicate request",
+                },
+            },
+        )
+
+    async def go() -> None:
+        transport = httpx2.MockTransport(nrs_style)
+        async with NrsClient("http://nrs", KEYS, transport=transport) as nrs:
+            await nrs.validate_irn("X", "b", "X-ABCDEFGH-20261030")
+
+    with pytest.raises(NrsRejectedError, match="this business does not exist") as error:
+        asyncio.run(go())
+    assert error.value.error_id == "5c751690-d344-4272-a1be-095442c8e650"

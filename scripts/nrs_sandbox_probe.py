@@ -113,6 +113,7 @@ def _invoice(business_id: str, irn: str, tin: str, issue_date: str) -> dict[str,
         "issue_date": issue_date,
         "invoice_type_code": "381",
         "document_currency_code": "NGN",
+        "tax_currency_code": "NGN",  # required (run 2, 2026-10-30)
         "invoice_kind": "B2B",
         "accounting_supplier_party": {
             "party_name": "Test Business",

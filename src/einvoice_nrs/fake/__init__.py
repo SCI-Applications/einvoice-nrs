@@ -12,12 +12,14 @@ simulate:
       "delay_seconds": 0                                  # > client timeout = simulated timeout
     }
 
-TODO(nrs-confirm): the exact response and error shapes (sandbox test); update both sides then.
+Errors use NRS's real shape (sandbox probe, 2026-10-30). Like NRS, it wants the IRN uppercase.
+TODO(nrs-confirm): the success bodies and the /entity fields (no real business seen yet).
 """
 
 import asyncio
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +27,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-IRN = re.compile(r"^(?P<number>[A-Za-z0-9]+)-(?P<service_id>[A-Za-z0-9]{8})-(?P<date>[0-9]{8})$")
+IRN = re.compile(r"^(?P<number>[A-Z0-9]+)-(?P<service_id>[A-Z0-9]{8})-(?P<date>[0-9]{8})$")
 AMOUNTS = ("payable_amount", "tax_inclusive_amount", "line_extension_amount")
 
 
@@ -55,8 +57,23 @@ class Config(BaseModel):
         return cls.model_validate(json.loads(path.read_text("utf-8")))
 
 
-def _error(status: int, message: str) -> JSONResponse:
-    return JSONResponse({"code": status, "error": {"public_message": message}}, status_code=status)
+def _error(status: int, details: str) -> JSONResponse:
+    """NRS's real error shape (sandbox probe, 2026-10-30)."""
+    return JSONResponse(
+        {
+            "code": status,
+            "data": None,
+            "message": "error has occurred",
+            "error": {
+                "id": str(uuid.uuid4()),
+                "handler": "fake_nrs",
+                "details": details,
+                "public_message": "validation failed: we are unable to process your request. "
+                "also confirm this is not a duplicate request",
+            },
+        },
+        status_code=status,
+    )
 
 
 def _ok(data: Any) -> JSONResponse:

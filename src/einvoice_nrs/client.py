@@ -9,7 +9,7 @@ the calling client (context §4.1): NRS doesn't enforce that for us.
 
 Our API carries amounts as JSON strings ("1075.00"); NRS wants JSON numbers. to_nrs_json()
 writes Decimals as exact number literals, never through float.
-TODO(nrs-confirm): the error body shape and the /entity response fields (sandbox test).
+TODO(nrs-confirm): the /entity response fields (sandbox: our key sees no entities yet).
 """
 
 import json
@@ -26,9 +26,12 @@ _AMOUNT = re.compile(r"^-?(0|[1-9]\d*)(\.\d+)?$")  # a valid JSON number
 
 
 class NrsError(Exception):
-    def __init__(self, message: str, status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, status_code: int | None = None, error_id: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.error_id = error_id  # NRS's id for this error: quote it to NRS support
 
 
 class NrsUnavailableError(NrsError):
@@ -92,21 +95,26 @@ def to_nrs_json(invoice: dict[str, Any]) -> bytes:
     return _write(invoice).encode()
 
 
-def _message(response: httpx2.Response) -> str:
+def _error_of(response: httpx2.Response) -> tuple[str, str | None]:
+    """(message, NRS error id). NRS answers errors as
+    {"code", "data": null, "message": "error has occurred",
+     "error": {"id", "handler", "details", "public_message"}}  (sandbox probe, 2026-10-30):
+    `details` says what's wrong; `public_message` is always the same generic sentence."""
     try:
         body = response.json()
     except ValueError:
-        return response.text[:500] or response.reason_phrase
+        return response.text[:500] or response.reason_phrase, None
     if isinstance(body, dict):
         error = body.get("error")
         if isinstance(error, dict):
-            for key in ("public_message", "message", "details"):
+            error_id = str(error["id"]) if error.get("id") else None
+            for key in ("details", "public_message", "message"):
                 if error.get(key):
-                    return str(error[key])
+                    return str(error[key]), error_id
         for key in ("message", "error", "detail"):
             if body.get(key):
-                return str(body[key])
-    return json.dumps(body)[:500]
+                return str(body[key]), None
+    return json.dumps(body)[:500], None
 
 
 class NrsClient:
@@ -146,10 +154,10 @@ class NrsClient:
             raise NrsUnavailableError(f"NRS timed out on {method} {path}") from error
         except httpx2.TransportError as error:
             raise NrsUnavailableError(f"NRS unreachable on {method} {path}: {error}") from error
-        if response.status_code >= 500:
-            raise NrsUnavailableError(_message(response), response.status_code)
         if response.status_code >= 400:
-            raise NrsRejectedError(_message(response), response.status_code)
+            message, error_id = _error_of(response)
+            kind = NrsUnavailableError if response.status_code >= 500 else NrsRejectedError
+            raise kind(message, response.status_code, error_id)
         if not response.content:
             return None
         body = response.json()
