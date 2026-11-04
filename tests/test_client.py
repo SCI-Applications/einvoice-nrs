@@ -121,9 +121,9 @@ def test_amounts_go_to_nrs_as_exact_numbers() -> None:
 def test_validate_sign_confirm() -> None:
     async def flow(nrs: NrsClient) -> Any:
         await nrs.validate(INVOICE)  # the fake rejects amounts that aren't JSON numbers
-        await nrs.sign(INVOICE)
+        await nrs.sign(to_nrs_json(INVOICE))
         with pytest.raises(NrsRejectedError, match="already signed"):
-            await nrs.sign(INVOICE)
+            await nrs.sign(to_nrs_json(INVOICE))
         return await nrs.confirm(IRN)
 
     assert run(flow)["irn"] == IRN
