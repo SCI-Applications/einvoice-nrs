@@ -145,8 +145,15 @@ class NrsClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _call(self, method: str, path: str, json_body: dict[str, Any] | None = None) -> Any:
-        content = to_nrs_json(json_body) if json_body is not None else None
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+        content: bytes | None = None,
+    ) -> Any:
+        if json_body is not None:
+            content = to_nrs_json(json_body)
         headers = {"Content-Type": "application/json"} if content is not None else None
         try:
             response = await self._http.request(method, path, content=content, headers=headers)
@@ -177,8 +184,10 @@ class NrsClient:
     async def validate(self, invoice: dict[str, Any]) -> Any:
         return await self._call("POST", "/invoice/validate", invoice)
 
-    async def sign(self, invoice: dict[str, Any]) -> Any:
-        return await self._call("POST", "/invoice/sign", invoice)
+    async def sign(self, signed_text: bytes) -> Any:
+        """Sign exactly these bytes (to_nrs_json of the invoice): the caller keeps the same bytes
+        as the signed text, so what we store is byte for byte what NRS signed."""
+        return await self._call("POST", "/invoice/sign", content=signed_text)
 
     async def confirm(self, irn: str) -> Any:
         return await self._call("GET", f"/invoice/confirm/{irn}")

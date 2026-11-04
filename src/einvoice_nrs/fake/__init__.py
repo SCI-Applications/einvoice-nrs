@@ -8,7 +8,8 @@ simulate:
       "api_key": "...", "api_secret": "...",
       "businesses": [{"business_id": "...", "tin": "...", "name": "...", "service_id": "..."}],
       "reject_irns": ["INV1-94ND90NR-20261029"],        # irn/validate says no
-      "failures": [{"operation": "irn_validate", "status": 503, "times": 2}],
+      "failures": [{"operation": "irn_validate", "status": 503, "times": 2},
+                   {"operation": "sign", "status": 504, "after": true}],  # signs, then fails
       "delay_seconds": 0                                  # > client timeout = simulated timeout
     }
 
@@ -42,6 +43,9 @@ class Failure(BaseModel):
     operation: str  # entity, irn_validate, validate, sign, confirm
     status: int = 503
     times: int = 1
+    # True: do the work, then answer with the failure, as when NRS signs an invoice but the
+    # answer is lost (a timeout). Only `sign` honours it.
+    after: bool = False
 
 
 class Config(BaseModel):
@@ -89,6 +93,7 @@ def create_app(config: Config) -> FastAPI:
 
     failures = [f.model_copy() for f in config.failures]
     signed: set[str] = set()
+    app.state.signed = signed  # for tests to inspect
     app.state.calls = []  # (operation, body) for tests to inspect
 
     async def gate(request: Request, operation: str) -> JSONResponse | None:
@@ -101,8 +106,11 @@ def create_app(config: Config) -> FastAPI:
             return _error(401, "invalid api key or secret")
         if config.delay_seconds:
             await asyncio.sleep(config.delay_seconds)
+        return failed_now(operation, after=False)
+
+    def failed_now(operation: str, after: bool) -> JSONResponse | None:
         for failure in failures:
-            if failure.operation == operation and failure.times > 0:
+            if failure.operation == operation and failure.after == after and failure.times > 0:
                 failure.times -= 1
                 return _error(failure.status, f"simulated {failure.status} on {operation}")
         return None
@@ -161,7 +169,7 @@ def create_app(config: Config) -> FastAPI:
         if body["irn"] in signed:
             return _error(400, "invoice already signed")
         signed.add(body["irn"])
-        return _ok({"ok": True})
+        return failed_now("sign", after=True) or _ok({"ok": True})
 
     @app.get("/api/v1/invoice/confirm/{irn}")
     async def confirm(irn: str, request: Request) -> JSONResponse:
