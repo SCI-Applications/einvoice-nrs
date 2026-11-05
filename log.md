@@ -2,7 +2,7 @@
 
 Running log so any session can pick up where the last one stopped.
 Start with the "Start here" block; dated entries follow, newest first.
-The history before 2026-11-05 is in the `einvoice-platform` repo's `log.md`.
+The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed from `einvoice-platform`).
 
 ## Start here
 
@@ -10,7 +10,7 @@ The history before 2026-11-05 is in the `einvoice-platform` repo's `log.md`.
 2. Follow the working agreement below.
 3. Update this block and the newest entry as you work: decisions and why, what was tested, next steps.
 
-**What this repo is:** the NRS toolkit our SI (`einvoice-platform`) and APP (`einvoice-app`) both install as a pinned version: the NRS client, the NRS code lists, a fake NRS, the sandbox probe and the code-list download. No secrets, no database, no service of its own. Public, so the services' CI can install it.
+**What this repo is:** the NRS toolkit our SI (`einvoice-si`) and APP (`einvoice-app`) both install as a pinned version: the NRS client, the NRS code lists, a fake NRS, the sandbox probe and the code-list download. No secrets, no database, no service of its own. Public, so the services' CI can install it.
 
 **Current state (2026-11-05)**
 - `main`: the history of these files from `einvoice-platform` (up to its PR #10).

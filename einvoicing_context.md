@@ -1,6 +1,6 @@
-# CLAUDE.md — einvoice-platform
+# Project context — NRS e-invoicing SI + APP
 
-Context for Claude Code working in this repository. Read this fully before writing code.
+Context for Claude Code working in the SI, APP and NRS toolkit repos (this file is copied into each; keep the copies the same). Read this fully before writing code.
 When something here conflicts with what the user says in the session, the user wins; update this file if the change is lasting.
 
 ---
@@ -13,7 +13,7 @@ A **System Integrator (SI) + Access Point Provider (APP)** platform for Nigeria'
 - **APP**: handles the exchange side — signs/validates via NRS (see §5), transmits signed invoices to the buyer, receives NRS webhooks, and later pulls inbound invoices.
 - **Support**: internal platform for staff — monitoring, invoice lookup, retries, onboarding review, complaints.
 
-This repo (`einvoice-platform`) contains **SI and APP only**. Two other repos in the same GitHub organisation are owned by teammates:
+Our code lives in three repos (split on 2026-11-05): **`einvoice-si`** (the SI; renamed from `einvoice-platform`), **`einvoice-app`** (the APP) and **`einvoice-nrs`** (the NRS toolkit both install as a pinned version). Two other repos in the same GitHub organisation are owned by teammates:
 - **Business portal (UI)** — just another *client* of the SI API.
 - **Support platform** — its own service and database. **Hybrid access (agreed 2026-10-22):** it *reads* SI/APP data through a read-only database login limited to reporting views, and *acts* (retry, suspend, revoke, store keys, …) only through the **admin APIs this repo exposes**. It never writes to the SI or APP databases.
 
@@ -35,19 +35,19 @@ Owner of SI + APP: Muhammad Hassan.
 
 ---
 
-## 3. Repository layout (target)
+## 3. Repository layout
 
 ```
-einvoice-platform/
-  si/            # SI service (FastAPI) + its own DB migrations
-  app/           # APP service (FastAPI) + its own DB migrations + workers
-  shared/        # code shared by SI and APP: NRS client, NRS enums & code lists, money/Decimal utils, crypto/QR, logging
-  docker-compose.yml   # Postgres 16, Redis, Vault (dev mode)
-  .github/workflows/   # CI: ruff, mypy, pytest
-  CLAUDE.md
+einvoice-si/     # the SI: src/einvoice_si (FastAPI + worker; einvoice_si.common = its own plumbing),
+                 #   migrations/, tests/, scripts/ (link_our_app.py, end_to_end.py), docs/api/si-openapi.json,
+                 #   Dockerfile.si + compose.si.yaml (server), docker-compose.yml (local Postgres, Redis, Vault)
+einvoice-app/    # the APP: src/einvoice_app (FastAPI + worker; einvoice_app.common), migrations/, tests/,
+                 #   scripts/link_our_si.py, docs/api/app-openapi.json, docker-compose.yml (local Postgres)
+einvoice-nrs/    # NRS toolkit: einvoice_nrs.client, einvoice_nrs.codes, einvoice_nrs.fake (dev only),
+                 #   scripts (sandbox probe, code-list download); no service, no secrets; public
 ```
 
-Each service owns **its own PostgreSQL database** (SI DB, APP DB; the Support DB lives in the support repo).
+Each repo has its own CI (ruff, mypy, pytest), `CLAUDE.md`, `log.md` and a copy of this file. The services share no code: each installs `einvoice-nrs` at a pinned version, and the SI reaches the APP only through the APP's API, like any external SI. Each service owns **its own PostgreSQL database** (SI DB, APP DB; the Support DB lives in the support repo).
 
 **Admin API (for the Support platform)**: SI and APP each expose a separate, staff-only admin API (own auth; every call is written to that service's own `admin_audit_log` — the service that performs an action records it, whatever Support also logs on its side) — search by IRN/TIN, invoice journey, retry a failed step, suspend a client or key, store a business's crypto keys. Treat it as a contract with the support teammate: publish it in OpenAPI and change it only by agreement.
 
