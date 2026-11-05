@@ -1,0 +1,72 @@
+[project]
+name = "einvoice-nrs"
+version = "0.1.0"
+description = "NRS MBS toolkit for our SI and APP: API client, code lists, fake NRS (dev only)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx2>=2.15.1",
+]
+
+[project.optional-dependencies]
+# The fake NRS (einvoice_nrs.fake): tests and offline work only, never deployed.
+fake = [
+    "fastapi>=0.153.0",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "einvoice-nrs[fake]",  # the fake NRS, for the tests
+    "hvac>=2.4.0",  # scripts/nrs_sandbox_probe.py reads our sandbox key from the local Vault
+    "mypy",
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/einvoice_nrs"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle errors and warnings
+    "F",       # pyflakes: unused imports, undefined names
+    "I",       # import order
+    "B",       # bugbear: likely bugs
+    "UP",      # pyupgrade: modern Python syntax
+    "N",       # pep8 naming
+    "S",       # bandit: security smells
+    "ASYNC",   # async mistakes
+    "SIM",     # simplifications
+    "RUF",     # ruff-specific checks
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # tests use assert
+
+[tool.ruff.lint.isort]
+known-first-party = ["einvoice_nrs"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["hvac", "hvac.*"]
+ignore_missing_imports = true  # hvac ships no type hints
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "--strict-markers"]
+filterwarnings = ["error"]

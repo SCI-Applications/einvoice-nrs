@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The job's GitHub token can only read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, type-check and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Third-party actions are pinned to a commit SHA (tag in the comment) so a moved tag can't change what runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.3"
+          enable-cache: true
+
+      - name: Install dependencies (exactly as in uv.lock)
+        run: uv sync --locked
+
+      - name: Pre-commit checks (ruff, mypy, safety hooks)
+        run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
+
+      - name: Tests (against the fake NRS; the real NRS is never called in CI)
+        run: uv run pytest

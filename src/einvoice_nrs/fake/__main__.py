@@ -1,7 +1,7 @@
 """Run the fake NRS locally:
 
-uv run python -m fake_nrs                      # fake-nrs/config.json, port 8090
-uv run python -m fake_nrs --config my.json --port 8091
+uv run python -m einvoice_nrs.fake                      # the packaged config.json, port 8090
+uv run python -m einvoice_nrs.fake --config my.json --port 8091
 """
 
 import argparse
@@ -9,9 +9,9 @@ from pathlib import Path
 
 import uvicorn
 
-from fake_nrs import Config, create_app
+from einvoice_nrs.fake import Config, create_app
 
-DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config.json"
+DEFAULT_CONFIG = Path(__file__).resolve().parent / "config.json"
 
 
 def main() -> None:

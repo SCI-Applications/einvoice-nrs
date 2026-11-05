@@ -1,11 +1,11 @@
-"""Download the NRS invoice code lists into shared/src/einvoice_shared/nrs_codes/.
+"""Download the NRS invoice code lists into src/einvoice_nrs/codes/.
 
     uv run python scripts/fetch_nrs_code_lists.py
     uv run python scripts/fetch_nrs_code_lists.py --base-url https://<other-nrs-host>
 
 The resource endpoints need no API key. Run it where NRS is reachable, review the diff, and
 commit the files: code-list changes go through review like code (context §7.4). The files keep
-NRS's own field names; einvoice_shared.nrs_codes reads them.
+NRS's own field names; einvoice_nrs.codes reads them.
 """
 
 import argparse
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 SANDBOX = "https://eivc-k6z6d.ondigitalocean.app"
-OUT = Path(__file__).resolve().parent.parent / "shared" / "src" / "einvoice_shared" / "nrs_codes"
+OUT = Path(__file__).resolve().parent.parent / "src" / "einvoice_nrs" / "codes"
 
 # Output file -> endpoint names to try (the NRS docs spell some of them two ways).
 RESOURCES: dict[str, list[str]] = {
