@@ -26,10 +26,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx2
-from pydantic import SecretStr
+import hvac
 
-from einvoice_shared.nrs_client import API_PREFIX, NrsCredentials, to_nrs_json
-from einvoice_shared.vault import Vault
+from einvoice_nrs.client import API_PREFIX, NrsCredentials, to_nrs_json
 
 SANDBOX = "https://eivc-k6z6d.ondigitalocean.app"
 ALLOWED_HOSTS = {"eivc-k6z6d.ondigitalocean.app", "127.0.0.1", "localhost"}
@@ -217,15 +216,27 @@ def _variants(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def read_vault(path: str) -> dict[str, str]:
+    """Our NRS keys from the local Vault (KV v2, mount "secret")."""
+    vault = hvac.Client(
+        url=os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200"),
+        token=os.environ.get("VAULT_TOKEN", "dev-root-token"),
+        timeout=10,
+    )
+    response = vault.secrets.kv.v2.read_secret_version(
+        path=path, mount_point="secret", raise_on_deleted_version=True
+    )
+    data: dict[str, str] = response["data"]["data"]
+    return data
+
+
 async def run(args: argparse.Namespace) -> int:
     host = urlparse(args.base_url).hostname
     if host not in ALLOWED_HOSTS:
         print(f"Refusing {args.base_url}: this probe only talks to the sandbox or this machine.")
         return 2
-    token = os.environ.get("VAULT_TOKEN", "dev-root-token")
-    vault = Vault(os.environ.get("VAULT_ADDR", "http://127.0.0.1:8200"), SecretStr(token), "secret")
     try:
-        keys = NrsCredentials.from_vault(await vault.read(args.vault_path))
+        keys = NrsCredentials.from_vault(await asyncio.to_thread(read_vault, args.vault_path))
     except Exception as error:  # any failure here means: no usable keys
         print(f"Can't read our NRS keys from Vault at secret/{args.vault_path}: {error}")
         return 2

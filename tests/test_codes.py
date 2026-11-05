@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from einvoice_shared import nrs_codes
-from einvoice_shared.nrs_codes import CODES_VERSION, CodeListError, code_lists, load
+from einvoice_nrs import codes as nrs_codes
+from einvoice_nrs.codes import CODES_VERSION, CodeListError, code_lists, load
 
 
 def test_packaged_lists_load_and_match_the_manifest() -> None:

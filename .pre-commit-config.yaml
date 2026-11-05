@@ -1,0 +1,34 @@
+# Runs on every `git commit`. One-time setup: `pre-commit install`.
+# Run everything by hand: `pre-commit run --all-files`.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=2048] # the NRS code lists (HS codes) are a few hundred KB
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  # ruff and mypy run through uv so they use the exact versions in uv.lock.
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: mypy
+        entry: uv run mypy src tests scripts
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]

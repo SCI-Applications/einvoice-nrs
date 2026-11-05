@@ -1,4 +1,4 @@
-"""The NRS MBS API client, shared by SI and APP (context §4.1, §4.2).
+"""The NRS MBS API client, used by the SI and the APP (context §4.1, §4.2).
 
 Every call sends our `x-api-key` + `x-api-secret` (from Vault; never logged). Failures are one of:
 - NrsUnavailableError: timeout, network error or 5xx. Retry later (with backoff).

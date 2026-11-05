@@ -1,4 +1,4 @@
-"""The shared NRS client against the fake NRS (in-process, nothing real is called)."""
+"""The NRS client against the fake NRS (in-process, nothing real is called)."""
 
 import asyncio
 import json
@@ -8,14 +8,14 @@ from typing import Any
 import httpx2
 import pytest
 
-from einvoice_shared.nrs_client import (
+from einvoice_nrs.client import (
     NrsClient,
     NrsCredentials,
     NrsRejectedError,
     NrsUnavailableError,
     to_nrs_json,
 )
-from fake_nrs import Business, Config, Failure, create_app
+from einvoice_nrs.fake import Business, Config, Failure, create_app
 
 BUSINESS = Business(
     business_id="7d3e1f20-8a4b-4c6d-9e0f-1a2b3c4d5e6f",
