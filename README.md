@@ -1,6 +1,6 @@
 # einvoice-nrs
 
-The NRS MBS toolkit used by our SI (`einvoice-platform`) and our APP (`einvoice-app`). It holds
+The NRS MBS toolkit used by our SI (`einvoice-si`) and our APP (`einvoice-app`). It holds
 only what both services need from NRS, so neither depends on the other:
 
 | Part | What it is |
