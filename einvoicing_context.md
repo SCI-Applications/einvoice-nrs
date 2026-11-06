@@ -150,7 +150,7 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 5. SI writes an outbox event; relay sends it to the APP gateway (internal client key, `source = our_si`).
 6. APP workers: `validate`, then `sign` using **our** SI keys. On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
 7. APP returns the signed result to the SI (outbox). SI stores the exact signed text (`signed_payload_raw`) + SHA-256, builds the QR from the taxpayer's crypto keys, returns IRN + QR to the client (webhook signed with HMAC, plus a GET endpoint).
-8. APP transmits to the buyer with APP keys (B2B/B2G only), receives webhooks, verifies via lookup, records delivery; SI journey gets `delivery_status`.
+8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Which key a transmit uses (ours as APP, or the taxpayer's) is **(confirm)**.
 9. Payment updates: SI → NRS `PATCH /invoice/update` directly (not via the APP queue), logged in the SI journey.
 
 ### Path B — external SI (later sprint)
