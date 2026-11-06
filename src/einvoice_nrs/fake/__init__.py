@@ -28,6 +28,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from einvoice_nrs import __version__
+
 IRN = re.compile(r"^(?P<number>[A-Z0-9]+)-(?P<service_id>[A-Z0-9]{8})-(?P<date>[0-9]{8})$")
 AMOUNTS = ("payable_amount", "tax_inclusive_amount", "line_extension_amount")
 
@@ -46,6 +48,9 @@ class Failure(BaseModel):
     # True: do the work, then answer with the failure, as when NRS signs an invoice but the
     # answer is lost (a timeout). Only `sign` honours it.
     after: bool = False
+
+
+MAX_CALLS = 1000
 
 
 class Config(BaseModel):
@@ -94,11 +99,12 @@ def create_app(config: Config) -> FastAPI:
     failures = [f.model_copy() for f in config.failures]
     signed: set[str] = set()
     app.state.signed = signed  # for tests to inspect
-    app.state.calls = []  # (operation, body) for tests to inspect
+    app.state.calls = []  # (operation, body) for tests to inspect; only the latest MAX_CALLS
 
     async def gate(request: Request, operation: str) -> JSONResponse | None:
         """Auth, simulated delay and simulated failures, in that order."""
         app.state.calls.append((operation, await request.body()))
+        del app.state.calls[:-MAX_CALLS]  # a long-running copy (Render) must not grow forever
         if (
             request.headers.get("x-api-key") != config.api_key
             or request.headers.get("x-api-secret") != config.api_secret
@@ -125,6 +131,12 @@ def create_app(config: Config) -> FastAPI:
             if field in total and not isinstance(total[field], int | float):
                 return _error(400, f"legal_monetary_total.{field} must be a number")
         return None
+
+    @app.get("/fake-nrs")
+    async def identity() -> dict[str, object]:
+        """Says "I am the fake". The real NRS has no such route, so a caller can make sure it
+        is talking to a fake before sending test invoices (scripts/end_to_end.py does)."""
+        return {"fake_nrs": True, "version": __version__}
 
     @app.get("/api/v1/entity/{business_id}")
     async def entity(business_id: str, request: Request) -> JSONResponse:

@@ -63,14 +63,16 @@ Source: NRS developer docs (einvoice.nrs.gov.ng, API v1.1), the NRS Postman coll
 
 | Keys | Owner | Where stored | Used for |
 | --- | --- | --- | --- |
-| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Vault, platform config, one set per environment | Every SI-side NRS call (entity, IRN validate, validate, sign, confirm, update, download) |
+| Taxpayer's own `x-api-key` + `x-api-secret` | **Each taxpayer**, issued to the business by NRS. **Primary option (NRS confirmed, 2026-11-06)** | Vault, one path per taxpayer (never in a table, never in chat) | That taxpayer's NRS calls (IRN validate, validate, sign, confirm, update) |
+| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Vault, one set per environment | **Secondary option**: taxpayers that enable us as their SI on NRS instead of giving their own key; also our own SI-level calls |
 | APP keys | **Us**, as APP | Vault, platform config | transmit, acknowledge, lookup, pull, self-health-check. (confirm) whether SI and APP keys are one set or two |
-| Crypto keys (RSA public key + certificate) | **Each taxpayer**; once the business approves us, our staff download them from **our** NRS SI dashboard (API Integration → Approved Businesses → Get Cryptographic Keys) | Vault, referenced from `taxpayer_nrs_credentials` | Building that taxpayer's QR code |
+| Crypto keys (RSA public key + certificate) | **Each taxpayer**; provided by the client that holds the taxpayer (e.g. the business portal), not by Support (Muhammad, 2026-11-05). Also downloadable from our NRS SI dashboard for businesses that approved us | Vault, referenced from `taxpayer_nrs_credentials` | Building that taxpayer's QR code |
 | `api_client_key` + secret | **Our clients**, issued by us | Only a hash in `client_credentials` | Clients calling our API |
 
 Rules:
 - Every NRS request sends `x-api-key` and `x-api-secret` headers. (Some NRS help articles mention OAuth 2.0; the live API and Postman use keys. Build on keys.)
-- Our NRS keys can act for every taxpayer we serve, so **before every NRS call, our code must check the `business_id` belongs to an `authorized` taxpayer under the calling client.** Never rely on NRS to enforce this.
+- Which key a call uses: the taxpayer's own key when we hold one (primary), else our SI key for taxpayers that enabled us as their SI (secondary). The design of this choice is the taxpayer intake architecture task (Fri 6 Nov, §10).
+- Our SI key can act for every taxpayer that enabled us, so **before every NRS call, our code must check the `business_id` belongs to an `authorized` taxpayer under the calling client**, whichever key is used. Never rely on NRS to enforce this.
 - A business authorises us on the NRS side; it then appears under **Approved Businesses** on our NRS SI dashboard. Exactly where the business does this (its own MBS dashboard?) is **(confirm)**. No API to list approved businesses or fetch their keys is known, so in V1 this is a manual staff step.
 
 ### 4.1a Our NRS SI dashboard (sandbox)
@@ -156,11 +158,11 @@ Onboarded by Support (API key, webhook, allowed TINs). Sends an NRS v1.1 invoice
 **(confirm)** whether we may sign for an external SI's taxpayers with our keys. Current working assumption: **Path B is delivery-only** — accept already-signed invoices and only transmit.
 
 ### Onboarding a taxpayer
+NRS confirmed (2026-11-06) that **taxpayers provide their own NRS API keys**: that is the primary option. Enabling us as their SI stays as the secondary option. The detailed design is the taxpayer intake architecture task (Fri 6 Nov, §10); until then:
 1. Client creates a `client_taxpayers` row (`pending`).
-2. The business approves us as its SI on NRS (exact steps (confirm)). It then appears under Approved Businesses on our NRS dashboard.
-3. Our staff download its crypto keys from our dashboard and store them through the **SI admin API** (called from the Support platform): the file goes straight to Vault; the DB stores only the vault path + fingerprint (`taxpayer_nrs_credentials`, `source = nrs_dashboard`). Businesses and clients never handle or upload keys.
-4. SI calls `GET /entity/{business_id}` with our key and checks the TIN matches → `authorized`.
-5. Outbox event `taxpayer.authorized`; the client is notified. Clients never see key material.
+2. **Primary:** the client sends the taxpayer's own NRS API key + secret (and its crypto keys) through our API; they go straight to Vault, the DB stores only Vault paths + fingerprints (`taxpayer_nrs_credentials`). **Secondary:** the business approves us as its SI on NRS; it then appears under Approved Businesses on our NRS dashboard, and we call with our SI key.
+3. SI checks the business with NRS (`GET /entity/{business_id}` or an equivalent call, with the key that will be used) and that the TIN matches → `authorized`. Local and dev environments also have the admin `dev-authorize` shortcut.
+4. Outbox event `taxpayer.authorized`; the client is notified. Key material is never returned by any API or shown to Support.
 
 ---
 
@@ -170,12 +172,33 @@ Onboarded by Support (API key, webhook, allowed TINs). Sends an NRS v1.1 invoice
 - SQLAlchemy 2 + Alembic (one migration history per service), PostgreSQL 16
 - Redis + **arq** for background jobs (BullMQ was considered earlier but is Node-only)
 - Transactional **outbox** table in each DB + a relay that publishes to the queue
-- HashiCorp Vault (dev mode locally) for all secrets
+- HashiCorp Vault for all secrets (dev mode on the Mac; a sealed, file-backed Vault in Docker on the server: §6a)
 - httpx for NRS calls; respx to mock NRS in tests
 - `cryptography` (RSA PKCS#1 v1.5) and `qrcode` for QR
 - pytest, ruff, mypy, pre-commit; Docker Compose for local stack; GitHub Actions CI
 - Later: Prometheus metrics, Grafana, Locust for load tests
-- Hosting must be in a Nigerian data centre (NITDA licence condition). Do not add any service that stores data outside Nigeria.
+- Hosting must be in a Nigerian data centre (NITDA licence condition). Do not add any service that stores data outside Nigeria. **Open (2026-11-06):** the test set-up uses Neon (London) and Render (abroad) for test data only; production hosting must satisfy this rule before any real taxpayer data.
+
+### 6a. Servers, hosting and secrets (test server, 2026-11-06)
+
+- **Server** `165.232.110.175` (Ubuntu, Docker): SI API :8001 + SI worker (`einvoice-si`, `compose.si.yaml`), APP API :8002 + APP worker (`einvoice-app`, `compose.app.yaml`), Vault (`deploy/vault/` in the SI repo). They share the private Docker network `einvoice` (`vault:8200`, `si:8001`, `app:8002`). Images install exactly `uv.lock` (incl. `einvoice-nrs` at a pinned commit), run as a non-root user, never contain `.env`.
+- **Databases:** Neon, one project per service; our databases `si` and `app` with `*_owner` (migrations), `*_runtime` (the service), `*_support_reader` (Support views). Encrypted (`POSTGRES_SSLMODE=require`), direct host (no pooler). Neon's `neondb_owner` is used only for set-up.
+- **NRS on the server:** the fake NRS on Render (`einvoice-nrs/render.yaml`, identifies itself at `GET /fake-nrs`) or the NRS sandbox; chosen by `NRS_BASE_URL` + `NRS_VAULT_PATH` in both services' `.env`.
+- **Vault security:** file storage on a Docker volume; no published port (reachable only on the `einvoice` network); starts **sealed** after every restart and is unsealed by a person with 2 of 3 unseal keys; unseal keys and the root token live in a password manager (never chat, email, git), the root token is logged out after admin work; one token per service with a least-privilege policy (SI: read `nrs/*` + `app/si-client`, own `si/*`; APP: read `nrs/*` + `si/app-client`, own `app/*`). SI ↔ APP keys: the secret only in Vault, the checking side keeps a one-way hash. **Vault is the only source of keys**: no `.env` fallback (removed 2026-11-06 after it caused two outages).
+- **Renewals and rotation:**
+
+| What | When | How |
+| --- | --- | --- |
+| Service Vault tokens (SI, APP) | **Monthly** (they expire after 32 days) | `vault token renew` with each token (runbook) |
+| Vault unseal keys / root token | When a holder leaves, or on suspicion | `vault operator rekey` / `vault operator generate-root`, then revoke the old root token |
+| SI ↔ APP link keys | Yearly, on any leak, or when a link breaks | Re-run `link_our_si.py` (APP) / `link_our_app.py --new-internal-key` (SI); old key revoked at once |
+| Support admin keys | When staff change, or yearly | `admin_keys`, update `.env`, give Support the new pair |
+| Neon role passwords | Yearly or on any leak | `ALTER ROLE … PASSWORD` as `neondb_owner`, update `.env`, `up -d` |
+| Neon `neondb_owner` | After set-up and after any exposure | Reset in the Neon console |
+| NRS keys (ours, taxpayers', sandbox) | When NRS or the business issues new ones | New pair into Vault; services reload within 5 minutes |
+| Fake NRS key pair | On exposure | Change in Render and Vault together |
+
+- How it all works: `docs/server-explained.md` (SI repo); every command: `docs/server-runbook.md`.
 
 ---
 
@@ -252,7 +275,7 @@ Hard-coded in `shared/`, not in a table:
 
 **Security (non-negotiable)**
 - Never log, print, return or commit secrets, keys, certificates or full NRS responses containing them. Redact in logs.
-- Secrets live only in Vault (local: Vault dev mode). Config holds vault paths, never values. No secrets in `.env` committed to git; commit `.env.example` only.
+- Secrets live only in Vault (local: Vault dev mode; server: §6a). Config holds vault paths, never values. Keys are never read from `.env` as a fallback. No secrets in `.env` committed to git; commit `.env.example` / `.env.server.example` only.
 - Client secrets: store only a strong hash (argon2/bcrypt); compare in constant time.
 - Outgoing webhooks to clients are HMAC-signed.
 - Every request is scoped: a client may only touch its own taxpayers and invoices.
@@ -302,11 +325,21 @@ Sandbox access is already approved; generate our SI API key from the dashboard b
 
 Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
+**Where we are and what comes next (Muhammad, 2026-11-06).** Done: W1, W2 (blocks 1–5: intake → checks → IRN → hand-over → validate → sign → result to the SI), the repo split, Docker images, the test server (first end-to-end test PASSED against the NRS sandbox on 6 Nov). Next:
+
+| When | What |
+| --- | --- |
+| To finish | Block **6a** (QR, crypto keys required, result webhook); block **6b** (code-list endpoints, bulk invoices, client sign-up via the portal, taxpayers' own NRS keys); **hosting** (production, see §6); **business portal requests client API keys** (rotating or static: to decide) |
+| Fri 6 Nov | Sending signed invoices to buyers (transmit, B2B/B2G); **taxpayer intake architecture**: taxpayer's own NRS keys (primary) vs enabling us as their SI (secondary) |
+| Mon 9 Nov | Support toolkit and endpoint logic (admin APIs) |
+| Tue 10 Nov | Integration with the business portal teammate |
+| Demo | Postponed until further notice (shareholders first) |
+
 ---
 
 ## 11. Open questions (do not build around a guess)
 
-1. Where a business approves us as its SI, whether NRS rejects calls for businesses that haven't, and whether an API exists to list approved businesses or fetch their crypto keys.
+1. Where a business approves us as its SI, whether NRS rejects calls for businesses that haven't, and whether an API exists to list approved businesses or fetch their crypto keys. **Partly answered (2026-11-06):** NRS confirmed taxpayers provide their own API keys (primary option); enabling us as SI stays secondary.
 2. One set of NRS keys for SI and APP, or two? Does the APP need its own NRS role/application?
 3. Whether we may validate/sign for external SIs' taxpayers with our keys (Path B), or delivery only.
 4. B2C: transmitted to a buyer, or reported only? Is `accounting_customer_party` optional for B2C?
