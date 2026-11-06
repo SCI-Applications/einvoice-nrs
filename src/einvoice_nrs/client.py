@@ -191,3 +191,22 @@ class NrsClient:
 
     async def confirm(self, irn: str) -> Any:
         return await self._call("GET", f"/invoice/confirm/{irn}")
+
+    # --- APP: transmission to the buyer (context §4.2) ---------------------------------------
+    # TODO(nrs-confirm): the success bodies of these calls (not seen yet in the sandbox).
+
+    async def transmit(self, irn: str) -> Any:
+        """Ask NRS to deliver a signed invoice to the buyer's side. NRS answers at once; the
+        delivery itself is followed with transmit_lookup."""
+        return await self._call("POST", f"/invoice/transmit/{irn}")
+
+    async def transmit_lookup(self, irn: str) -> Any:
+        """Where a transmitted invoice is: TRANSMITTING, TRANSMITTED, ACKNOWLEDGED or FAILED."""
+        return await self._call("GET", f"/invoice/transmit/lookup/{irn}")
+
+    async def transmit_lookup_tin(self, tin: str) -> Any:
+        """Whether a TIN (the buyer) can receive invoices through MBS."""
+        return await self._call("GET", f"/invoice/transmit/lookup/tin/{tin}")
+
+    async def transmit_health(self) -> Any:
+        return await self._call("GET", "/invoice/transmit/self-health-check")

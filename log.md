@@ -14,7 +14,7 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 
 **Current state (2026-11-06)**
 - `main`: version 0.1.0 (commit `14473c7`, pinned by the SI and the APP).
-- `preview`: version **0.2.0**: the fake NRS can run on Render for the test server (`render.yaml`, `--host`, port from `$PORT`, key pair from `FAKE_NRS_API_KEY` / `FAKE_NRS_API_SECRET`), says it is the fake at `GET /fake-nrs` (the SI's end-to-end test checks this), and keeps only its latest 1000 calls in memory. The services don't need 0.2.0 (the server talks to the fake over HTTP), so their pin stays at 0.1.0 until they do.
+- Version 0.2.0 (on `main`): the fake NRS can run on Render for the test server (`render.yaml`, `--host`, port from `$PORT`, key pair from `FAKE_NRS_API_KEY` / `FAKE_NRS_API_SECRET`), says it is the fake at `GET /fake-nrs` (the SI's end-to-end test checks this), and keeps only its latest 1000 calls in memory. The services don't need 0.2.0 (the server talks to the fake over HTTP), so their pin stays at 0.1.0 until they do.
 
 **Timeline:** `einvoicing_context.md` §10 (also in the SI repo's log). Next: Fri 6 Nov transmit to buyers + taxpayer intake architecture; Mon 9 Nov Support toolkit; Tue 10 Nov portal integration; still to finish: 6a, 6b, hosting, portal-issued client API keys. Demo postponed (shareholders first).
 
@@ -36,6 +36,15 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 2. PR to `main`; Muhammad merges.
 3. Tag the release commit `vX.Y.Z` (GitHub Releases, or `git push origin vX.Y.Z`).
 4. In each service: change the `tag` (or `rev`) in `[tool.uv.sources]`, `uv lock`, test, PR.
+
+---
+## 2026-11-06 (cont.) — 0.3.0: transmit calls
+
+- Muhammad approved transmit (signed invoices to the buyer), followed by **polling** `transmit/lookup` instead of NRS webhooks: webhooks need a public HTTPS address for the APP, which we don't have, and NRS doesn't sign its webhooks, so each would need a lookup anyway.
+- Client: `transmit(irn)` (POST `/invoice/transmit/{IRN}`), `transmit_lookup(irn)`, `transmit_lookup_tin(tin)`, `transmit_health()`. TODO(nrs-confirm): their success bodies (not seen in the sandbox yet).
+- Fake: the same routes. Transmit needs a signed invoice; the transmit answer is the first of `transmit_steps` and each lookup moves one step on (default TRANSMITTING → TRANSMITTED → ACKNOWLEDGED, the last repeats; so a B2B end-to-end test sees `transmitted` after the first lookup, ~1 minute); `Failure(operation="transmit" | "transmit_lookup")` simulates outages/refusals.
+- Version 0.3.0; the SI and the APP pin this commit.
+- Tested: 22 passed (new: delivery steps, transmit needs signing + outage, buyer TIN lookup + health); ruff, mypy clean.
 
 ---
 ## 2026-11-06 — Fake NRS on Render (0.2.0)

@@ -1,8 +1,9 @@
-"""A fake NRS MBS API for tests and offline work. Dev only: never deployed.
+"""A fake NRS MBS API for tests, offline work and the test server (Render). It never talks to
+NRS and holds no real data.
 
-It answers the calls our NRS client makes (entity, irn/validate, validate, sign, confirm) in the
-shapes the NRS docs show, and a config decides which businesses exist and which failures to
-simulate:
+It answers the calls our NRS client makes (entity, irn/validate, validate, sign, confirm,
+transmit and its lookups) in the shapes the NRS docs show, and a config decides which businesses
+exist and which failures to simulate:
 
     {
       "api_key": "...", "api_secret": "...",
@@ -42,7 +43,7 @@ class Business(BaseModel):
 
 
 class Failure(BaseModel):
-    operation: str  # entity, irn_validate, validate, sign, confirm
+    operation: str  # entity, irn_validate, validate, sign, confirm, transmit, transmit_lookup
     status: int = 503
     times: int = 1
     # True: do the work, then answer with the failure, as when NRS signs an invoice but the
@@ -60,6 +61,10 @@ class Config(BaseModel):
     reject_irns: list[str] = Field(default_factory=list)
     failures: list[Failure] = Field(default_factory=list)
     delay_seconds: float = 0
+    # The transmit answer is the first step; each lookup then moves one step on (the last repeats).
+    transmit_steps: list[str] = Field(
+        default_factory=lambda: ["TRANSMITTING", "TRANSMITTED", "ACKNOWLEDGED"]
+    )
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -99,6 +104,8 @@ def create_app(config: Config) -> FastAPI:
     failures = [f.model_copy() for f in config.failures]
     signed: set[str] = set()
     app.state.signed = signed  # for tests to inspect
+    transmissions: dict[str, int] = {}  # irn -> lookups answered so far
+    app.state.transmissions = transmissions
     app.state.calls = []  # (operation, body) for tests to inspect; only the latest MAX_CALLS
 
     async def gate(request: Request, operation: str) -> JSONResponse | None:
@@ -190,5 +197,38 @@ def create_app(config: Config) -> FastAPI:
         if irn not in signed:
             return _error(404, "invoice not found")
         return _ok({"irn": irn, "payment_status": "PENDING"})
+
+    @app.post("/api/v1/invoice/transmit/{irn}")
+    async def transmit(irn: str, request: Request) -> JSONResponse:
+        if failed := await gate(request, "transmit"):
+            return failed
+        if irn not in signed:
+            return _error(404, "invoice not found or not signed")
+        transmissions.setdefault(irn, 1)  # the first lookup answers the next step
+        return _ok({"irn": irn, "status": config.transmit_steps[0]})
+
+    @app.get("/api/v1/invoice/transmit/lookup/{irn}")
+    async def transmit_lookup(irn: str, request: Request) -> JSONResponse:
+        if failed := await gate(request, "transmit_lookup"):
+            return failed
+        if irn not in transmissions:
+            return _error(404, "transmission not found")
+        steps = config.transmit_steps
+        status = steps[min(transmissions[irn], len(steps) - 1)]
+        transmissions[irn] += 1
+        return _ok({"irn": irn, "status": status})
+
+    @app.get("/api/v1/invoice/transmit/lookup/tin/{tin}")
+    async def transmit_lookup_tin(tin: str, request: Request) -> JSONResponse:
+        if failed := await gate(request, "transmit_lookup_tin"):
+            return failed
+        found = next((b for b in config.businesses if b.tin == tin), None)
+        if found is None:
+            return _error(404, "tin not found")
+        return _ok({"tin": tin, "name": found.name})
+
+    @app.get("/api/v1/invoice/transmit/self-health-check")
+    async def transmit_health(request: Request) -> JSONResponse:
+        return await gate(request, "transmit_health") or _ok({"ok": True})
 
     return app

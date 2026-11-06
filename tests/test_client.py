@@ -217,3 +217,51 @@ def test_render_keys_replace_the_config_keys(monkeypatch: pytest.MonkeyPatch) ->
     assert (config.api_key, config.api_secret) == ("server-key", "server-secret")
     monkeypatch.delenv("FAKE_NRS_API_KEY")
     assert load_config(DEFAULT_CONFIG).api_key == "fake-nrs-key"
+
+
+def test_transmit_then_lookups_step_through_delivery() -> None:
+    async def flow(nrs: NrsClient) -> list[Any]:
+        await nrs.sign(to_nrs_json(INVOICE))
+        accepted = await nrs.transmit(IRN)
+        steps = [(await nrs.transmit_lookup(IRN))["status"] for _ in range(4)]
+        return [accepted["status"], *steps]
+
+    assert run(flow) == [
+        "TRANSMITTING",
+        "TRANSMITTED",
+        "ACKNOWLEDGED",
+        "ACKNOWLEDGED",
+        "ACKNOWLEDGED",
+    ]
+
+
+def test_transmit_needs_a_signed_invoice_and_can_fail() -> None:
+    async def unsigned(nrs: NrsClient) -> None:
+        await nrs.transmit(IRN)
+
+    with pytest.raises(NrsRejectedError, match="not signed"):
+        run(unsigned)
+
+    async def lookup_unknown(nrs: NrsClient) -> None:
+        await nrs.transmit_lookup(IRN)
+
+    with pytest.raises(NrsRejectedError, match="transmission not found"):
+        run(lookup_unknown)
+
+    async def outage(nrs: NrsClient) -> Any:
+        await nrs.sign(to_nrs_json(INVOICE))
+        with pytest.raises(NrsUnavailableError):
+            await nrs.transmit(IRN)
+        return await nrs.transmit(IRN)  # the simulated outage was once
+
+    assert run(outage, failures=[Failure(operation="transmit", status=503)])["irn"] == IRN
+
+
+def test_buyer_tin_lookup_and_health() -> None:
+    async def flow(nrs: NrsClient) -> Any:
+        assert (await nrs.transmit_health())["ok"] is True
+        with pytest.raises(NrsRejectedError, match="tin not found"):
+            await nrs.transmit_lookup_tin("99999999-0001")
+        return await nrs.transmit_lookup_tin(BUSINESS.tin)
+
+    assert run(flow)["name"] == BUSINESS.name

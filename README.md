@@ -48,7 +48,7 @@ einvoice-nrs = { git = "https://github.com/SCI-Applications/einvoice-nrs", rev =
   fake then accepts only that pair, which the server also holds in Vault at `secret/nrs/fake`.
   Check it: `GET https://<address>/fake-nrs` → `{"fake_nrs": true, ...}`. The free plan sleeps
   after ~15 minutes idle; the first call then takes up to a minute.
-- It answers entity, irn/validate, validate, sign and confirm in NRS's shapes; the config can
+- It answers entity, irn/validate, validate, sign, confirm, transmit and the transmit lookups in NRS's shapes (lookups step through TRANSMITTING → TRANSMITTED → ACKNOWLEDGED); the config can
   reject IRNs, simulate failures or delays. It never talks to NRS.
 
 **Security:** the key pair in `config.json` is public (this repo is public), so any public copy
