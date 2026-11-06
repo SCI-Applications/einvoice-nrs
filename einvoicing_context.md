@@ -65,7 +65,7 @@ Source: NRS developer docs (einvoice.nrs.gov.ng, API v1.1), the NRS Postman coll
 | --- | --- | --- | --- |
 | Taxpayer's own `x-api-key` + `x-api-secret` | **Each taxpayer**, issued to the business by NRS. **Primary option (NRS confirmed, 2026-11-06)** | Vault, one path per taxpayer (never in a table, never in chat) | That taxpayer's NRS calls (IRN validate, validate, sign, confirm, update) |
 | `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Vault, one set per environment | **Secondary option**: taxpayers that enable us as their SI on NRS instead of giving their own key; also our own SI-level calls |
-| APP keys | **Us**, as APP | Vault, platform config | transmit, acknowledge, lookup, pull, self-health-check. (confirm) whether SI and APP keys are one set or two |
+| APP keys | **Us**, as APP | Vault `secret/nrs/app` (`NRS_APP_VAULT_PATH`) | transmit, acknowledge, lookup, pull, self-health-check. **Separate from SI/taxpayer keys:** the sandbox refuses all transmit calls with the test business's key (403 "user does not have access to this resource", 2026-11-06). We have no APP access yet: **ask NRS** |
 | Crypto keys (RSA public key + certificate) | **Each taxpayer**; sent by the client that holds the taxpayer (e.g. the business portal) **together with the taxpayer's NRS API keys**, never by Support (Muhammad, 2026-11-06). For `our_si` taxpayers the client sends the crypto keys alone | Vault, referenced from `taxpayer_nrs_credentials` | Building that taxpayer's QR code |
 | `api_client_key` + secret | **Our clients**, issued by us | Only a hash in `client_credentials` | Clients calling our API |
 
@@ -150,7 +150,7 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 5. SI writes an outbox event; relay sends it to the APP gateway (internal client key, `source = our_si`).
 6. APP workers: `validate`, then `sign` using **our** SI keys. On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
 7. APP returns the signed result to the SI (outbox). SI stores the exact signed text (`signed_payload_raw`) + SHA-256, builds the QR from the taxpayer's crypto keys, returns IRN + QR to the client (webhook signed with HMAC, plus a GET endpoint).
-8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Which key a transmit uses (ours as APP, or the taxpayer's) is **(confirm)**.
+8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Transmit and lookups use **our APP key** (`NRS_APP_VAULT_PATH`); NRS refuses them with SI/taxpayer keys (403, sandbox 2026-11-06). Without the APP key, B2B/B2G invoices stay `signed` and wait.
 9. Payment updates: SI → NRS `PATCH /invoice/update` directly (not via the APP queue), logged in the SI journey.
 
 ### Path B — external SI (later sprint)
@@ -186,7 +186,7 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 - Hand-over to the APP adds `taxpayer_ref` (SI taxpayer id) and `nrs_key_mode`; the APP reads the key from Vault itself. No key ever travels between the services.
 - One small function in each service picks the key for every NRS call. The `business_id` ↔ authorized-taxpayer check (§4.1) stays, whichever key is used.
 
-**Open before building:** (1) which harmless NRS call proves a taxpayer key works (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) which key a transmit uses.
+**Open before building:** (1) which harmless NRS call proves a taxpayer key works (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
 
 **Where it lands:** 6a = crypto keys through `nrs-credentials` (needed for QR); 6b = `nrs_key_mode`, NRS keys, verification, Vault area + APP policy. The Support admin `crypto-keys` endpoint is retired (Monday, Support toolkit). Local and dev keep the admin `dev-authorize` shortcut.
 
@@ -366,7 +366,7 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 ## 11. Open questions (do not build around a guess)
 
 1. Where a business approves us as its SI, whether NRS rejects calls for businesses that haven't, and whether an API exists to list approved businesses or fetch their crypto keys. **Partly answered (2026-11-06):** NRS confirmed taxpayers provide their own API keys (primary option); enabling us as SI stays secondary.
-2. One set of NRS keys for SI and APP, or two? Does the APP need its own NRS role/application?
+2. One set of NRS keys for SI and APP, or two? Does the APP need its own NRS role/application? **Partly answered (sandbox, 2026-11-06):** transmit calls need APP access; the SI/taxpayer key gets 403 on every transmit route. Ask NRS how we get the APP role and APP keys.
 3. Whether we may validate/sign for external SIs' taxpayers with our keys (Path B), or delivery only.
 4. B2C: transmitted to a buyer, or reported only? Is `accounting_customer_party` optional for B2C?
 5. Are state/LGA codes required on party addresses?
