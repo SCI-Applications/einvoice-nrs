@@ -61,7 +61,7 @@ class Config(BaseModel):
     reject_irns: list[str] = Field(default_factory=list)
     failures: list[Failure] = Field(default_factory=list)
     delay_seconds: float = 0
-    # What successive transmit lookups answer for one invoice (the last one repeats).
+    # The transmit answer is the first step; each lookup then moves one step on (the last repeats).
     transmit_steps: list[str] = Field(
         default_factory=lambda: ["TRANSMITTING", "TRANSMITTED", "ACKNOWLEDGED"]
     )
@@ -204,7 +204,7 @@ def create_app(config: Config) -> FastAPI:
             return failed
         if irn not in signed:
             return _error(404, "invoice not found or not signed")
-        transmissions.setdefault(irn, 0)  # asking again is harmless
+        transmissions.setdefault(irn, 1)  # the first lookup answers the next step
         return _ok({"irn": irn, "status": config.transmit_steps[0]})
 
     @app.get("/api/v1/invoice/transmit/lookup/{irn}")

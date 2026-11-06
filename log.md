@@ -42,7 +42,7 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 
 - Muhammad approved transmit (signed invoices to the buyer), followed by **polling** `transmit/lookup` instead of NRS webhooks: webhooks need a public HTTPS address for the APP, which we don't have, and NRS doesn't sign its webhooks, so each would need a lookup anyway.
 - Client: `transmit(irn)` (POST `/invoice/transmit/{IRN}`), `transmit_lookup(irn)`, `transmit_lookup_tin(tin)`, `transmit_health()`. TODO(nrs-confirm): their success bodies (not seen in the sandbox yet).
-- Fake: the same routes. Transmit needs a signed invoice; successive lookups answer `transmit_steps` (default TRANSMITTING → TRANSMITTED → ACKNOWLEDGED, the last repeats); `Failure(operation="transmit" | "transmit_lookup")` simulates outages/refusals.
+- Fake: the same routes. Transmit needs a signed invoice; the transmit answer is the first of `transmit_steps` and each lookup moves one step on (default TRANSMITTING → TRANSMITTED → ACKNOWLEDGED, the last repeats; so a B2B end-to-end test sees `transmitted` after the first lookup, ~1 minute); `Failure(operation="transmit" | "transmit_lookup")` simulates outages/refusals.
 - Version 0.3.0; the SI and the APP pin this commit.
 - Tested: 22 passed (new: delivery steps, transmit needs signing + outage, buyer TIN lookup + health); ruff, mypy clean.
 

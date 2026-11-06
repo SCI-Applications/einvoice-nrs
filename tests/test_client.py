@@ -228,8 +228,8 @@ def test_transmit_then_lookups_step_through_delivery() -> None:
 
     assert run(flow) == [
         "TRANSMITTING",
-        "TRANSMITTING",
         "TRANSMITTED",
+        "ACKNOWLEDGED",
         "ACKNOWLEDGED",
         "ACKNOWLEDGED",
     ]
