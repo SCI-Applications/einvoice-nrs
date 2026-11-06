@@ -15,7 +15,8 @@ from einvoice_nrs.client import (
     NrsUnavailableError,
     to_nrs_json,
 )
-from einvoice_nrs.fake import Business, Config, Failure, create_app
+from einvoice_nrs.fake import MAX_CALLS, Business, Config, Failure, create_app
+from einvoice_nrs.fake.__main__ import DEFAULT_CONFIG, load_config
 
 BUSINESS = Business(
     business_id="7d3e1f20-8a4b-4c6d-9e0f-1a2b3c4d5e6f",
@@ -184,3 +185,35 @@ def test_nrs_shaped_error_body_is_read() -> None:
     with pytest.raises(NrsRejectedError, match="this business does not exist") as error:
         asyncio.run(go())
     assert error.value.error_id == "5c751690-d344-4272-a1be-095442c8e650"
+
+
+def test_fake_says_it_is_the_fake() -> None:
+    async def go() -> dict[str, Any]:
+        transport = httpx2.ASGITransport(app=create_app(Config(businesses=[BUSINESS])))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://fake-nrs") as http:
+            body: dict[str, Any] = (await http.get("/fake-nrs")).json()
+            return body
+
+    assert asyncio.run(go())["fake_nrs"] is True
+
+
+def test_fake_keeps_only_the_latest_calls() -> None:
+    app = create_app(Config(businesses=[BUSINESS]))
+
+    async def go() -> None:
+        transport = httpx2.ASGITransport(app=app)
+        async with NrsClient("http://fake-nrs", KEYS, transport=transport) as nrs:
+            for _ in range(MAX_CALLS + 5):
+                await nrs.validate_irn("INV2026001", BUSINESS.business_id, IRN)
+
+    asyncio.run(go())
+    assert len(app.state.calls) == MAX_CALLS
+
+
+def test_render_keys_replace_the_config_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_NRS_API_KEY", "server-key")
+    monkeypatch.setenv("FAKE_NRS_API_SECRET", "server-secret")
+    config = load_config(DEFAULT_CONFIG)
+    assert (config.api_key, config.api_secret) == ("server-key", "server-secret")
+    monkeypatch.delenv("FAKE_NRS_API_KEY")
+    assert load_config(DEFAULT_CONFIG).api_key == "fake-nrs-key"
