@@ -188,7 +188,14 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 
 **Open before building:** (1) which harmless NRS call proves a taxpayer key works (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
 
-**Where it lands:** 6a = crypto keys through `nrs-credentials` (needed for QR); 6b = `nrs_key_mode`, NRS keys, verification, Vault area + APP policy. The Support admin `crypto-keys` endpoint is retired (Monday, Support toolkit). Local and dev keep the admin `dev-authorize` shortcut.
+**Built (Mon 9 Nov, blocks 6a + 6b; contracts approved by Muhammad the same day):**
+- `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); Vault area and policies (`deploy/vault/policies`). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
+- The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **To confirm with the sandbox probe** (open item 1).
+- Crypto keys are required: an invoice for a taxpayer without crypto keys for the NRS environment in use (`NRS_ENVIRONMENT`) ends `check_failed`. Keys for the other environment are stored unchecked (`verified_at` empty) until we use it.
+- QR (§4.4) is built when the signed result arrives (journey `qr_generated`).
+- Result webhook: `invoice.cleared`, `invoice.failed`, `invoice.delivery_updated`, signed with a per-key webhook secret (Vault `secret/si/clients/{client_id}/webhooks/{key_id}`, shown once when a key gets a webhook URL); retried 1, 5, 15, 30 min, journey `webhook_sent` / `webhook_failed`.
+- `GET /v1/codes`, `GET /v1/codes/{name}` (ETag); `POST /v1/invoices/bulk` (up to 100, each on its own).
+- Client sign-up: `POST /v1/clients` for keys with `can_create_clients` (Support sets it on the portal's key, `POST /admin/v1/credentials/{id}/permissions`); the new client is approved at once (Muhammad: a business must hand us its taxpayers' NRS keys anyway).
 
 ---
 
@@ -355,10 +362,12 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
 | When | What |
 | --- | --- |
-| To finish | Block **6a** (QR, crypto keys required, result webhook); block **6b** (code-list endpoints, bulk invoices, client sign-up via the portal, taxpayers' own NRS keys); **hosting** (production, see §6); **business portal requests client API keys** (rotating or static: to decide) |
+| To finish | **hosting** (production, see §6); confirm with the sandbox: the taxpayer key check, the crypto_keys.txt layout and the QR timestamp (§11) |
 | Fri 6 Nov | **Done:** sending signed invoices to buyers (transmit + polling); taxpayer intake architecture designed and approved (§5) |
-| Mon 9 Nov | Support toolkit and endpoint logic (admin APIs) |
+| Fri 6 Nov (eve) | **Done:** Support toolkit, SI + APP admin APIs (merged) |
+| Mon 9 Nov | Morning: blocks **6a + 6b** (built, see §5); afternoon: Support integration. If the Support teammate finds it too tight: back to the original plan |
 | Tue 10 Nov | Integration with the business portal teammate |
+| Wed 11 Nov | All integration and implementation done; final end-to-end; contracts frozen |
 | Demo | Postponed until further notice (shareholders first) |
 
 ---
