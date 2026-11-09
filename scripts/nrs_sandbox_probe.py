@@ -2,6 +2,7 @@
 
     uv run python scripts/nrs_sandbox_probe.py
     uv run python scripts/nrs_sandbox_probe.py --business-id <uuid> --service-id <8 chars>
+    uv run python scripts/nrs_sandbox_probe.py --key-check --business-id <uuid> --service-id <8>
 
 Run by hand on a machine whose local Vault holds our sandbox key (secret/nrs/si); never in CI.
 It only reads and validates: it never calls sign, so nothing is cleared. It refuses any host but
@@ -13,6 +14,11 @@ What it checks (context §11 and the TODO(nrs-confirm) notes in the code):
 2. irn/validate: which invoice_reference NRS expects, wrong Service ID, wrong format.
 3. invoice/validate with invoices that each break one rule our checks enforce, to learn which
    rules NRS itself enforces (addresses, totals, rounding, discount rate, HS code, unit code).
+
+--key-check (context §5, open item 1) runs only the SI's taxpayer key check: irn/validate with a
+made-up IRN, once with the key in Vault and once with a wrong secret. The SI counts 401/403 as
+"NRS refused the key" and any other answer as "the key works"; the report shows whether the
+sandbox answers that way.
 """
 
 import argparse
@@ -242,6 +248,8 @@ async def run(args: argparse.Namespace) -> int:
         return 2
 
     headers = {"x-api-key": keys.api_key, "x-api-secret": keys.api_secret}
+    if args.key_check:
+        return await _key_check(args, headers)
     async with httpx2.AsyncClient(
         base_url=args.base_url.rstrip("/") + API_PREFIX, headers=headers, timeout=30
     ) as http:
@@ -299,6 +307,30 @@ async def run(args: argparse.Namespace) -> int:
     return _save(probe, args.out)
 
 
+async def _key_check(args: argparse.Namespace, headers: dict[str, str]) -> int:
+    if not (args.business_id and args.service_id):
+        print("--key-check needs --business-id and --service-id")
+        return 2
+    today = datetime.now(UTC).astimezone(LAGOS).date()
+    body = {
+        "business_id": args.business_id,
+        "irn": f"KEYCHECK-{args.service_id}-{today:%Y%m%d}",
+        "invoice_reference": "KEYCHECK",
+    }
+    probe: Probe | None = None
+    for label, secret in (("right key", headers["x-api-secret"]), ("wrong secret", "wrong")):
+        async with httpx2.AsyncClient(
+            base_url=args.base_url.rstrip("/") + API_PREFIX,
+            headers={**headers, "x-api-secret": secret},
+            timeout=30,
+        ) as http:
+            if probe is None:
+                probe = Probe(http)
+            probe.http = http
+            await probe.call(f"key check: {label}", "POST", "/invoice/irn/validate", body)
+    return _save(probe, args.out) if probe else 2
+
+
 def _save(probe: Probe, out: Path) -> int:
     report = {"run_at": datetime.now(UTC).isoformat(), "results": probe.results}
     out.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -314,6 +346,9 @@ def main() -> int:
     parser.add_argument("--tin", help="The business's TIN, if /entity doesn't show it")
     parser.add_argument("--service-id", help="The business's 8-character NRS Service ID")
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument(
+        "--key-check", action="store_true", help="only the taxpayer key check (see above)"
+    )
     return asyncio.run(run(parser.parse_args()))
 
 

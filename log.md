@@ -38,6 +38,12 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 4. In each service: change the `tag` (or `rev`) in `[tool.uv.sources]`, `uv lock`, test, PR.
 
 ---
+## 2026-11-09 — Probe: taxpayer key check
+
+- `scripts/nrs_sandbox_probe.py --key-check --business-id … --service-id …`: `irn/validate` with a made-up IRN, once with the key in Vault and once with a wrong secret, to confirm the SI's taxpayer key check (401/403 = refused, any other answer = the key works; context §5, open item 1). No version change: services don't use the scripts.
+- Context synced (blocks 6a + 6b built in the SI and APP).
+
+---
 ## 2026-11-06 (cont.) — 0.3.0: transmit calls
 
 - Muhammad approved transmit (signed invoices to the buyer), followed by **polling** `transmit/lookup` instead of NRS webhooks: webhooks need a public HTTPS address for the APP, which we don't have, and NRS doesn't sign its webhooks, so each would need a lookup anyway.
