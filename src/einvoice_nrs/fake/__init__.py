@@ -1,7 +1,7 @@
 """A fake NRS MBS API for tests, offline work and the test server (Render). It never talks to
 NRS and holds no real data.
 
-It answers the calls our NRS client makes (entity, irn/validate, validate, sign, confirm,
+It answers the calls our NRS client makes (health, entity, irn/validate, validate, sign, confirm,
 transmit and its lookups) in the shapes the NRS docs show, and a config decides which businesses
 exist and which failures to simulate:
 
@@ -43,7 +43,9 @@ class Business(BaseModel):
 
 
 class Failure(BaseModel):
-    operation: str  # entity, irn_validate, validate, sign, confirm, transmit, transmit_lookup
+    operation: (
+        str  # health, entity, irn_validate, validate, sign, confirm, transmit, transmit_lookup
+    )
     status: int = 503
     times: int = 1
     # True: do the work, then answer with the failure, as when NRS signs an invoice but the
@@ -144,6 +146,15 @@ def create_app(config: Config) -> FastAPI:
         """Says "I am the fake". The real NRS has no such route, so a caller can make sure it
         is talking to a fake before sending test invoices (scripts/end_to_end.py does)."""
         return {"fake_nrs": True, "version": __version__}
+
+    @app.get("/api")
+    async def health() -> JSONResponse:
+        """NRS's health check (sandbox: 200 {"healthy": true}, no key needed). A failure for
+        operation "health" in the config makes it answer that status instead."""
+        app.state.calls.append(("health", b""))
+        if failed := failed_now("health", after=False):
+            return failed
+        return JSONResponse({"healthy": True})
 
     @app.get("/api/v1/entity/{business_id}")
     async def entity(business_id: str, request: Request) -> JSONResponse:

@@ -265,3 +265,16 @@ def test_buyer_tin_lookup_and_health() -> None:
         return await nrs.transmit_lookup_tin(BUSINESS.tin)
 
     assert run(flow)["name"] == BUSINESS.name
+
+
+def test_health_needs_no_key_and_can_fail() -> None:
+    async def get(fake: Any) -> httpx2.Response:
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=fake), base_url="http://fake-nrs"
+        ) as http:
+            return await http.get("/api")
+
+    healthy = asyncio.run(get(create_app(Config())))
+    assert (healthy.status_code, healthy.json()) == (200, {"healthy": True})
+    down = asyncio.run(get(create_app(Config(failures=[Failure(operation="health", status=503)]))))
+    assert down.status_code == 503
