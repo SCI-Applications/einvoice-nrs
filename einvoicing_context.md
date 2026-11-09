@@ -114,7 +114,7 @@ Sandbox host seen in docs/forum: `eivc-k6z6d.ondigitalocean.app`. Keep all hosts
 - Take the taxpayer's `crypto_keys.txt` (base64 PEM RSA-2048 public key + certificate).
 - Build JSON `{"irn": "<IRN>.<timestamp>", "certificate": "<certificate>"}`.
 - Encrypt with RSA PKCS#1 v1.5 using the public key, base64-encode, render as QR.
-- Timestamp format: docs say unix timestamp; the community npm package uses HHMMSS + ms, and the NRS dashboard's QR tool shows an HH:MM:SS clock — **likely HHMMSS, verify** by pasting our output into the dashboard's "Validate IRN Signature" tool before shipping.
+- Timestamp format: **unix timestamp** (seconds), as the docs say: our QR passed the dashboard's "Validate IRN Signature" tool (2026-11-09).
 - We hold no private signing key, so no HSM is needed.
 
 ### 4.5 Invoice payload (NRS v1.1, JSON)
@@ -192,6 +192,7 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 - `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); Vault area and policies (`deploy/vault/policies`). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
 - The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **Confirmed in the sandbox (2026-11-09):** right key → 200, wrong secret → 401 "invalid auth credentials" (open item 1 answered).
 - crypto_keys.txt layout confirmed with the test business's file: JSON, `public_key` = base64 PEM (RSA-2048), `certificate` = 60-character base64.
+- **QR confirmed (2026-11-09):** a sandbox end-to-end QR (unix-time timestamp, certificate as in the file) passed the dashboard's "Validate IRN Signature" tool (§11 item 6 answered).
 - Crypto keys are required: an invoice for a taxpayer without crypto keys for the NRS environment in use (`NRS_ENVIRONMENT`) ends `check_failed`. Keys for the other environment are stored unchecked (`verified_at` empty) until we use it.
 - QR (§4.4) is built when the signed result arrives (journey `qr_generated`).
 - Result webhook: `invoice.cleared`, `invoice.failed`, `invoice.delivery_updated`, signed with a per-key webhook secret (Vault `secret/si/clients/{client_id}/webhooks/{key_id}`, shown once when a key gets a webhook URL); retried 1, 5, 15, 30 min, journey `webhook_sent` / `webhook_failed`.
@@ -363,11 +364,11 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
 | When | What |
 | --- | --- |
-| To finish | **hosting** (production, see §6); confirm with the dashboard's "Validate IRN Signature" tool: the QR timestamp, and the certificate as-is in the QR (§11) |
+| To finish | **hosting** (production, see §6); **payments** (`POST /v1/invoices/{id}/payments` → NRS `PATCH /invoice/update`; stub today: decide Tuesday) |
 | Fri 6 Nov | **Done:** sending signed invoices to buyers (transmit + polling); taxpayer intake architecture designed and approved (§5) |
 | Fri 6 Nov (eve) | **Done:** Support toolkit, SI + APP admin APIs (merged) |
 | Mon 9 Nov | Morning: blocks **6a + 6b** (built, see §5); afternoon: Support integration. If the Support teammate finds it too tight: back to the original plan |
-| Tue 10 Nov | Integration with the business portal teammate |
+| Tue 10 Nov | Integration with the business portal teammate (plan: SI repo log, 2026-11-09 "Plan for Tuesday"); Support's Diagnostics checks (`/health/nrs`, `/health/app`, `/health/si`) built 9 Nov |
 | Wed 11 Nov | All integration and implementation done; final end-to-end; contracts frozen |
 | Demo | Postponed until further notice (shareholders first) |
 
@@ -380,7 +381,7 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 3. Whether we may validate/sign for external SIs' taxpayers with our keys (Path B), or delivery only.
 4. B2C: transmitted to a buyer, or reported only? Is `accounting_customer_party` optional for B2C?
 5. Are state/LGA codes required on party addresses?
-6. QR timestamp format (likely HHMMSS; verify with the dashboard's Validate IRN Signature tool).
+6. ~~QR timestamp format.~~ Answered: unix seconds; our QR passed the dashboard's Validate IRN Signature tool (2026-11-09).
 7. ~~Credit/debit note `invoice_type_code` values.~~ Answered: 380 Credit Note, 384 Debit Note (NRS sandbox `invoice-types`, 2026-10-28).
 8. Exact download decryption key derivation.
 9. Whether MBS itself checks invoice maths and HS codes (decides how strict our checks must be).

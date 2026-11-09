@@ -38,6 +38,11 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 4. In each service: change the `tag` (or `rev`) in `[tool.uv.sources]`, `uv lock`, test, PR.
 
 ---
+## 2026-11-09 (cont.) — 0.3.1: the fake answers NRS's health check
+
+- `GET /api` → 200 `{"healthy": true}`, as the sandbox does (no key); a `health` failure in the config makes it fail. For the services' `/health/nrs` (SCI Support's Diagnostics). Render's copy needs a redeploy after the merge.
+
+---
 ## 2026-11-09 — Probe: taxpayer key check
 
 - `scripts/nrs_sandbox_probe.py --key-check --business-id … --service-id …`: `irn/validate` with a made-up IRN, once with the key in Vault and once with a wrong secret, to confirm the SI's taxpayer key check (401/403 = refused, any other answer = the key works; context §5, open item 1). No version change: services don't use the scripts.

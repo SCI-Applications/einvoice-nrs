@@ -1,6 +1,6 @@
 [project]
 name = "einvoice-nrs"
-version = "0.3.0"
+version = "0.3.1"
 description = "NRS MBS toolkit for our SI and APP: API client, code lists, fake NRS (dev only)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
