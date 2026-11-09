@@ -186,11 +186,12 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 - Hand-over to the APP adds `taxpayer_ref` (SI taxpayer id) and `nrs_key_mode`; the APP reads the key from Vault itself. No key ever travels between the services.
 - One small function in each service picks the key for every NRS call. The `business_id` ↔ authorized-taxpayer check (§4.1) stays, whichever key is used.
 
-**Open before building:** (1) which harmless NRS call proves a taxpayer key works (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
+**Open before building:** (1) ~~which harmless NRS call proves a taxpayer key works~~ answered: `irn/validate`, see "Built" (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
 
 **Built (Mon 9 Nov, blocks 6a + 6b; contracts approved by Muhammad the same day):**
 - `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); Vault area and policies (`deploy/vault/policies`). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
-- The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **To confirm with the sandbox probe** (open item 1).
+- The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **Confirmed in the sandbox (2026-11-09):** right key → 200, wrong secret → 401 "invalid auth credentials" (open item 1 answered).
+- crypto_keys.txt layout confirmed with the test business's file: JSON, `public_key` = base64 PEM (RSA-2048), `certificate` = 60-character base64.
 - Crypto keys are required: an invoice for a taxpayer without crypto keys for the NRS environment in use (`NRS_ENVIRONMENT`) ends `check_failed`. Keys for the other environment are stored unchecked (`verified_at` empty) until we use it.
 - QR (§4.4) is built when the signed result arrives (journey `qr_generated`).
 - Result webhook: `invoice.cleared`, `invoice.failed`, `invoice.delivery_updated`, signed with a per-key webhook secret (Vault `secret/si/clients/{client_id}/webhooks/{key_id}`, shown once when a key gets a webhook URL); retried 1, 5, 15, 30 min, journey `webhook_sent` / `webhook_failed`.
@@ -362,7 +363,7 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
 | When | What |
 | --- | --- |
-| To finish | **hosting** (production, see §6); confirm with the sandbox: the taxpayer key check, the crypto_keys.txt layout and the QR timestamp (§11) |
+| To finish | **hosting** (production, see §6); confirm with the dashboard's "Validate IRN Signature" tool: the QR timestamp, and the certificate as-is in the QR (§11) |
 | Fri 6 Nov | **Done:** sending signed invoices to buyers (transmit + polling); taxpayer intake architecture designed and approved (§5) |
 | Fri 6 Nov (eve) | **Done:** Support toolkit, SI + APP admin APIs (merged) |
 | Mon 9 Nov | Morning: blocks **6a + 6b** (built, see §5); afternoon: Support integration. If the Support teammate finds it too tight: back to the original plan |
