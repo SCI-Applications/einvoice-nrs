@@ -364,11 +364,11 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
 | When | What |
 | --- | --- |
-| To finish | **hosting** (production, see §6) |
+| To finish | **hosting** (production, see §6); **payments** (`POST /v1/invoices/{id}/payments` → NRS `PATCH /invoice/update`; stub today: decide Tuesday) |
 | Fri 6 Nov | **Done:** sending signed invoices to buyers (transmit + polling); taxpayer intake architecture designed and approved (§5) |
 | Fri 6 Nov (eve) | **Done:** Support toolkit, SI + APP admin APIs (merged) |
 | Mon 9 Nov | Morning: blocks **6a + 6b** (built, see §5); afternoon: Support integration. If the Support teammate finds it too tight: back to the original plan |
-| Tue 10 Nov | Integration with the business portal teammate |
+| Tue 10 Nov | Integration with the business portal teammate (plan: SI repo log, 2026-11-09 "Plan for Tuesday"); Support's Diagnostics checks (`/health/nrs`, `/health/app`, `/health/si`) built 9 Nov |
 | Wed 11 Nov | All integration and implementation done; final end-to-end; contracts frozen |
 | Demo | Postponed until further notice (shareholders first) |
 
