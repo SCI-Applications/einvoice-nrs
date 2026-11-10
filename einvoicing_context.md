@@ -151,7 +151,7 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 6. APP workers: `validate`, then `sign` using **our** SI keys. On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
 7. APP returns the signed result to the SI (outbox). SI stores the exact signed text (`signed_payload_raw`) + SHA-256, builds the QR from the taxpayer's crypto keys, returns IRN + QR to the client (webhook signed with HMAC, plus a GET endpoint).
 8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Transmit and lookups use **our APP key** (`NRS_APP_VAULT_PATH`); NRS refuses them with SI/taxpayer keys (403, sandbox 2026-11-06). Without the APP key, B2B/B2G invoices stay `signed` and wait.
-9. Payment updates: SI → NRS `PATCH /invoice/update` directly (not via the APP queue), logged in the SI journey.
+9. Payment updates: SI → NRS `PATCH /invoice/update/{IRN}` directly (not via the APP), from the SI worker with the taxpayer's key, logged in the SI journey (built 2026-11-10: `POST /v1/invoices/{id}/payments`).
 
 ### Path B — external SI (later sprint)
 Onboarded by Support (API key, webhook, allowed TINs). Sends an NRS v1.1 invoice + IRN with an idempotency key. APP checks the SI is allowed for that TIN, the schema and IRN format.
@@ -364,7 +364,7 @@ Deferred until after the MVP: Path B (external SIs), inbound pull, load testing.
 
 | When | What |
 | --- | --- |
-| To finish | **hosting** (production, see §6); **payments** (`POST /v1/invoices/{id}/payments` → NRS `PATCH /invoice/update`; stub today: decide Tuesday) |
+| To finish | **hosting** (production, see §6); confirm the payment-update body with the sandbox probe (payments built 10 Nov) |
 | Fri 6 Nov | **Done:** sending signed invoices to buyers (transmit + polling); taxpayer intake architecture designed and approved (§5) |
 | Fri 6 Nov (eve) | **Done:** Support toolkit, SI + APP admin APIs (merged) |
 | Mon 9 Nov | Morning: blocks **6a + 6b** (built, see §5); afternoon: Support integration. If the Support teammate finds it too tight: back to the original plan |
