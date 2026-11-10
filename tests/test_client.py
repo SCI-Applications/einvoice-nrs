@@ -278,3 +278,20 @@ def test_health_needs_no_key_and_can_fail() -> None:
     assert (healthy.status_code, healthy.json()) == (200, {"healthy": True})
     down = asyncio.run(get(create_app(Config(failures=[Failure(operation="health", status=503)]))))
     assert down.status_code == 503
+
+
+def test_payment_updates_need_a_signed_invoice() -> None:
+    async def unsigned(nrs: NrsClient) -> None:
+        await nrs.update_payment(IRN, "PAID", "REF-1")
+
+    with pytest.raises(NrsRejectedError, match="not found"):
+        run(unsigned)
+
+    async def paid(nrs: NrsClient) -> Any:
+        await nrs.sign(to_nrs_json(INVOICE))
+        await nrs.update_payment(IRN, "PARTIAL", "REF-1", amount="500.00")
+        with pytest.raises(NrsRejectedError, match="amount is required"):
+            await nrs.update_payment(IRN, "PARTIAL", "REF-2")
+        return await nrs.update_payment(IRN, "PAID", "REF-3")
+
+    assert run(paid) == {"irn": IRN, "payment_status": "PAID"}

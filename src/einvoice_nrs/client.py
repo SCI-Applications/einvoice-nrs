@@ -192,6 +192,17 @@ class NrsClient:
     async def confirm(self, irn: str) -> Any:
         return await self._call("GET", f"/invoice/confirm/{irn}")
 
+    async def update_payment(
+        self, irn: str, payment_status: str, reference: str, amount: str | None = None
+    ) -> Any:
+        """Tell NRS a signed invoice's payment status: PARTIAL (with amount), PAID or REJECTED.
+        TODO(nrs-confirm): the body's field names (docs: payment_status + reference; the amount
+        field for PARTIAL is our guess) and the success body; the sandbox probe decides."""
+        body: dict[str, Any] = {"payment_status": payment_status, "reference": reference}
+        if amount is not None:
+            body["amount"] = amount
+        return await self._call("PATCH", f"/invoice/update/{irn}", body)
+
     # --- APP: transmission to the buyer (context §4.2) ---------------------------------------
     # TODO(nrs-confirm): the success bodies of these calls (not seen yet in the sandbox).
 

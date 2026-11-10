@@ -38,6 +38,11 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 4. In each service: change the `tag` (or `rev`) in `[tool.uv.sources]`, `uv lock`, test, PR.
 
 ---
+## 2026-11-10 — 0.3.2: payment updates
+
+- `NrsClient.update_payment(irn, payment_status, reference, amount?)` → `PATCH /invoice/update/{IRN}`; the fake answers it (only for IRNs it signed; PARTIAL needs an amount) and keeps them in `app.state.payments`. Probe `--payment-irn <signed IRN>` sends PARTIAL with and without an amount and a made-up status, then confirm. **To confirm:** the body field names.
+
+---
 ## 2026-11-09 (cont.) — 0.3.1: the fake answers NRS's health check
 
 - `GET /api` → 200 `{"healthy": true}`, as the sandbox does (no key); a `health` failure in the config makes it fail. For the services' `/health/nrs` (SCI Support's Diagnostics). Render's copy needs a redeploy after the merge.

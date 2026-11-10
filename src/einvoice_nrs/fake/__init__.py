@@ -2,6 +2,7 @@
 NRS and holds no real data.
 
 It answers the calls our NRS client makes (health, entity, irn/validate, validate, sign, confirm,
+payment updates,
 transmit and its lookups) in the shapes the NRS docs show, and a config decides which businesses
 exist and which failures to simulate:
 
@@ -108,6 +109,8 @@ def create_app(config: Config) -> FastAPI:
     app.state.signed = signed  # for tests to inspect
     transmissions: dict[str, int] = {}  # irn -> lookups answered so far
     app.state.transmissions = transmissions
+    payments: dict[str, list[dict[str, Any]]] = {}  # irn -> payment updates received, in order
+    app.state.payments = payments
     app.state.calls = []  # (operation, body) for tests to inspect; only the latest MAX_CALLS
 
     async def gate(request: Request, operation: str) -> JSONResponse | None:
@@ -208,6 +211,21 @@ def create_app(config: Config) -> FastAPI:
         if irn not in signed:
             return _error(404, "invoice not found")
         return _ok({"irn": irn, "payment_status": "PENDING"})
+
+    @app.patch("/api/v1/invoice/update/{irn}")
+    async def update_payment(irn: str, request: Request) -> JSONResponse:
+        if failed := await gate(request, "update_payment"):
+            return failed
+        if irn not in signed:
+            return _error(404, "invoice not found")
+        body = await request.json()
+        status = body.get("payment_status")
+        if status not in {"PENDING", "PARTIAL", "PAID", "REJECTED"}:
+            return _error(400, "payment_status must be PENDING, PARTIAL, PAID or REJECTED")
+        if status == "PARTIAL" and body.get("amount") is None:
+            return _error(400, "amount is required for PARTIAL")
+        payments.setdefault(irn, []).append(body)
+        return _ok({"irn": irn, "payment_status": status})
 
     @app.post("/api/v1/invoice/transmit/{irn}")
     async def transmit(irn: str, request: Request) -> JSONResponse:
