@@ -40,7 +40,7 @@ Owner of SI + APP: Muhammad Hassan.
 ```
 einvoice-si/     # the SI: src/einvoice_si (FastAPI + worker; einvoice_si.common = its own plumbing),
                  #   migrations/, tests/, scripts/ (link_our_app.py, end_to_end.py), docs/api/si-openapi.json,
-                 #   Dockerfile.si + compose.si.yaml (server), docker-compose.yml (local Postgres, Redis, Vault)
+                 #   Dockerfile.si + compose.si.yaml (server), docker-compose.yml (local Postgres, Redis)
 einvoice-app/    # the APP: src/einvoice_app (FastAPI + worker; einvoice_app.common), migrations/, tests/,
                  #   scripts/link_our_si.py, docs/api/app-openapi.json, docker-compose.yml (local Postgres)
 einvoice-nrs/    # NRS toolkit: einvoice_nrs.client, einvoice_nrs.codes, einvoice_nrs.fake (dev only),
@@ -51,7 +51,7 @@ Each repo has its own CI (ruff, mypy, pytest), `CLAUDE.md`, `log.md` and a copy 
 
 **Admin API (for the Support platform)**: SI and APP each expose a separate, staff-only admin API (own auth; every call is written to that service's own `admin_audit_log` — the service that performs an action records it, whatever Support also logs on its side) — search by IRN/TIN, invoice journey, retry a failed step, suspend a client or revoke a key. (Storing keys is not a Support action: clients send them, §5.) Treat it as a contract with the support teammate: publish it in OpenAPI and change it only by agreement.
 
-**Support read access (hybrid)**: each service has a read-only login `support_reader` that may only `SELECT` from reporting views in a `support` schema (e.g. `support.invoices`, `support.invoice_journey`, `support.clients`, `support.audit_log`). The views are a contract with the support teammate, like the admin API: tables may change freely as long as the views keep their shape, and changes to the views are agreed. Views leave out what Support doesn't need (secret hashes, Vault paths, full payloads). Later the login can point at a read replica so monitoring never slows invoice processing. Any change to data goes through the admin API, never through the database. Services never read another service's database. They talk through HTTP APIs and events (outbox → queue). There are **no foreign keys across databases**; cross-service references are plain UUID/TIN columns validated by the owning service.
+**Support read access (hybrid)**: each service has a read-only login `support_reader` that may only `SELECT` from reporting views in a `support` schema (e.g. `support.invoices`, `support.invoice_journey`, `support.clients`, `support.audit_log`). The views are a contract with the support teammate, like the admin API: tables may change freely as long as the views keep their shape, and changes to the views are agreed. Views leave out what Support doesn't need (secret hashes, encrypted key material, full payloads). Later the login can point at a read replica so monitoring never slows invoice processing. Any change to data goes through the admin API, never through the database. Services never read another service's database. They talk through HTTP APIs and events (outbox → queue). There are **no foreign keys across databases**; cross-service references are plain UUID/TIN columns validated by the owning service.
 
 ---
 
@@ -63,10 +63,10 @@ Source: NRS developer docs (einvoice.nrs.gov.ng, API v1.1), the NRS Postman coll
 
 | Keys | Owner | Where stored | Used for |
 | --- | --- | --- | --- |
-| Taxpayer's own `x-api-key` + `x-api-secret` | **Each taxpayer**, issued to the business by NRS. **Primary option (NRS confirmed, 2026-11-06)** | Vault, one path per taxpayer (never in a table, never in chat) | That taxpayer's NRS calls (IRN validate, validate, sign, confirm, update) |
-| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Vault, one set per environment | **Secondary option**: taxpayers that enable us as their SI on NRS instead of giving their own key; also our own SI-level calls |
-| APP keys | **Us**, as APP | Vault `secret/nrs/app` (`NRS_APP_VAULT_PATH`) | transmit, acknowledge, lookup, pull, self-health-check. **Separate from SI/taxpayer keys:** the sandbox refuses all transmit calls with the test business's key (403 "user does not have access to this resource", 2026-11-06). We have no APP access yet: **ask NRS** |
-| Crypto keys (RSA public key + certificate) | **Each taxpayer**; sent by the client that holds the taxpayer (e.g. the business portal) **together with the taxpayer's NRS API keys**, never by Support (Muhammad, 2026-11-06). For `our_si` taxpayers the client sends the crypto keys alone | Vault, referenced from `taxpayer_nrs_credentials` | Building that taxpayer's QR code |
+| Taxpayer's own `x-api-key` + `x-api-secret` | **Each taxpayer**, issued to the business by NRS. **Primary option (NRS confirmed, 2026-11-06)** | SI database, encrypted (`taxpayer_nrs_credentials`), and the APP's encrypted copy (`taxpayer_nrs_keys`); never in chat | That taxpayer's NRS calls (IRN validate, validate, sign, confirm, update) |
+| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Each service's `.env` (`NRS_API_KEY/SECRET`) | **Secondary option**: taxpayers that enable us as their SI on NRS instead of giving their own key; also our own SI-level calls |
+| APP keys | **Us**, as APP | The APP's `.env` (`NRS_APP_API_KEY/SECRET`) | transmit, acknowledge, lookup, pull, self-health-check. **Separate from SI/taxpayer keys:** the sandbox refuses all transmit calls with the test business's key (403 "user does not have access to this resource", 2026-11-06). We have no APP access yet: **ask NRS** |
+| Crypto keys (RSA public key + certificate) | **Each taxpayer**; sent by the client that holds the taxpayer (e.g. the business portal) **together with the taxpayer's NRS API keys**, never by Support (Muhammad, 2026-11-06). For `our_si` taxpayers the client sends the crypto keys alone | SI database, encrypted (`taxpayer_nrs_credentials`) | Building that taxpayer's QR code |
 | `api_client_key` + secret | **Our clients**, issued by us | Only a hash in `client_credentials` | Clients calling our API |
 
 Rules:
@@ -148,14 +148,16 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 3. Local checks: required fields, NRS codes (hard-coded lists), Decimal maths. Fail → `check_failed` with clear errors; nothing goes to NRS.
 4. Generate IRN, call `irn/validate`.
 5. SI writes an outbox event; relay sends it to the APP gateway (internal client key, `source = our_si`).
-6. APP workers: `validate`, then `sign` using **our** SI keys. On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
+6. APP workers: `validate`, then `sign` with **the taxpayer's own NRS key** (`own_keys`: the key its SI handed the APP, §5 taxpayer intake) or **our SI key** (`our_si`). On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
 7. APP returns the signed result to the SI (outbox). SI stores the exact signed text (`signed_payload_raw`) + SHA-256, builds the QR from the taxpayer's crypto keys, returns IRN + QR to the client (webhook signed with HMAC, plus a GET endpoint).
-8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Transmit and lookups use **our APP key** (`NRS_APP_VAULT_PATH`); NRS refuses them with SI/taxpayer keys (403, sandbox 2026-11-06). Without the APP key, B2B/B2G invoices stay `signed` and wait.
+8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Transmit and lookups use **our APP key** (`NRS_APP_API_KEY`), the only thing our APP key is used for; NRS refuses them with SI/taxpayer keys (403, sandbox 2026-11-06). Without the APP key, B2B/B2G invoices stay `signed` and wait.
 9. Payment updates: SI → NRS `PATCH /invoice/update/{IRN}` directly (not via the APP), from the SI worker with the taxpayer's key, logged in the SI journey (built 2026-11-10: `POST /v1/invoices/{id}/payments`).
 
-### Path B — external SI (later sprint)
-Onboarded by Support (API key, webhook, allowed TINs). Sends an NRS v1.1 invoice + IRN with an idempotency key. APP checks the SI is allowed for that TIN, the schema and IRN format.
-**(confirm)** whether we may sign for an external SI's taxpayers with our keys. Current working assumption: **Path B is delivery-only** — accept already-signed invoices and only transmit.
+### Path B — external SI (built 2026-11-13/16)
+Onboarded by Support (API key, allowed TINs). Sends an NRS v1.1 invoice + IRN with an idempotency key, exactly like our SI. Since 2026-11-13 the APP accepts any approved SI; since 2026-11-16 (Muhammad):
+- An SI other than ours may send only for the TINs on its allowed list (`client_taxpayers`, managed by Support): 403 at intake and for keys; the worker re-checks before calling NRS. Our SI (`OUR_SI_CLIENT_ID`) checks its own taxpayers and is not limited by the list.
+- `own_keys` invoices are signed with the taxpayer's own key, which that SI hands the APP (`PUT /v1/taxpayers/{tin}/nrs-key`); `our_si` invoices with our SI key.
+**(confirm with NRS)** whether we may sign an external SI's `our_si` invoices with our SI key.
 
 ### Taxpayer intake and keys (design approved by Muhammad, 2026-11-06; built in 6a/6b)
 
@@ -173,29 +175,28 @@ NRS confirmed (2026-11-06) that **taxpayers provide their own NRS API keys**: th
 | Call | What it does |
 | --- | --- |
 | `POST /v1/taxpayers` + `nrs_key_mode` | `own_keys` (default) or `our_si` |
-| `PUT /v1/taxpayers/{id}/nrs-credentials` | Body `{environment: sandbox\|production, api_key, api_secret, crypto_keys}` for `own_keys` (all required); `{environment, crypto_keys}` for `our_si`. **Write-only**: never returned, never logged. The SI checks the NRS key with NRS before storing anything; then the taxpayer is `authorized` (`own_keys`). Sending again replaces both keys (old ones revoked) |
-| `DELETE /v1/taxpayers/{id}/nrs-credentials/{environment}` | Revokes that environment's keys; an `own_keys` taxpayer goes back to `pending` |
-| `GET /v1/taxpayers/{id}` | Adds `nrs_key_mode` and, per key, `kind` (nrs_api_key, crypto_keys), `environment`, `fingerprint`, `status`, `stored_at`, `verified_at`; never key material |
+| `PUT /v1/taxpayers/{id}/nrs-credentials` | Body `{api_key, api_secret, crypto_keys}` for `own_keys` (all required); `{crypto_keys}` for `our_si`. **Write-only**: never returned, never logged. The SI checks the NRS key with NRS, hands it to our APP, then stores it; the taxpayer is then `authorized` (`own_keys`). Sending again replaces the keys (old ones revoked). (The `environment` field was dropped on 2026-11-13: one NRS environment per deployment.) |
+| `DELETE /v1/taxpayers/{id}/nrs-credentials` | Revokes the keys (here and at the APP); an `own_keys` taxpayer goes back to `pending` |
+| `GET /v1/taxpayers/{id}` | Adds `nrs_key_mode` and, per key, `kind` (nrs_api_key, crypto_keys), `fingerprint`, `status`, `stored_at`, `verified_at`; never key material |
 
-Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (NRS refused the key; taxpayer suspended), 503 (NRS unavailable: try again).
+Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (NRS refused the key; taxpayer suspended), 502 (our APP refused the key) and 503 (NRS or our APP unavailable: try again); nothing is stored on any error.
 
-**Storage**
-- Taxpayer NRS keys: Vault `secret/taxpayers/{taxpayer_id}/nrs/{environment}` (a new version on each replacement). The APP's Vault policy reads exactly `secret/taxpayers/+/nrs/*` (NRS keys only).
-- Crypto keys: Vault `secret/si/taxpayers/{taxpayer_id}/crypto_keys/{environment}/…` (SI only; the SI builds the QR).
-- The DB keeps only Vault paths, fingerprints and dates (`taxpayer_nrs_credentials`, §7.1).
-- Hand-over to the APP adds `taxpayer_ref` (SI taxpayer id) and `nrs_key_mode`; the APP reads the key from Vault itself. No key ever travels between the services.
+**Storage** (Vault removed 2026-11-13; encryption and the APP's copy added 2026-11-16, Muhammad)
+- SI: taxpayer NRS keys and crypto keys in `taxpayer_nrs_credentials.key_material`, **encrypted** with the SI's `DATA_ENCRYPTION_KEYS` (Fernet, `common/secret_box.py`); fingerprints and dates beside them.
+- APP: each `own_keys` taxpayer's NRS key in `taxpayer_nrs_keys` (§7.2), encrypted with the APP's own `DATA_ENCRYPTION_KEYS`, per SI and TIN. The SI hands it over when the client sends it (`PUT /v1/taxpayers/{tin}/nrs-key` on the APP, over the private network with a service token); keys stored before that are sent once with `scripts/sync_taxpayer_keys.py`. The APP refuses an `own_keys` invoice (409) until it holds the key.
+- Hand-over to the APP carries `taxpayer_ref` (SI taxpayer id) and `nrs_key_mode`; the APP finds the key by SI and seller TIN.
 - One small function in each service picks the key for every NRS call. The `business_id` ↔ authorized-taxpayer check (§4.1) stays, whichever key is used.
 
 **Open before building:** (1) ~~which harmless NRS call proves a taxpayer key works~~ answered: `irn/validate`, see "Built" (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
 
 **Built (Mon 9 Nov, blocks 6a + 6b; contracts approved by Muhammad the same day):**
-- `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); Vault area and policies (`deploy/vault/policies`). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
+- `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); (Vault then; since 2026-11-16 the APP's encrypted copy, §5 Storage). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
 - The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **Confirmed in the sandbox (2026-11-09):** right key → 200, wrong secret → 401 "invalid auth credentials" (open item 1 answered).
 - crypto_keys.txt layout confirmed with the test business's file: JSON, `public_key` = base64 PEM (RSA-2048), `certificate` = 60-character base64.
 - **QR confirmed (2026-11-09):** a sandbox end-to-end QR (unix-time timestamp, certificate as in the file) passed the dashboard's "Validate IRN Signature" tool (§11 item 6 answered).
-- Crypto keys are required: an invoice for a taxpayer without crypto keys for the NRS environment in use (`NRS_ENVIRONMENT`) ends `check_failed`. Keys for the other environment are stored unchecked (`verified_at` empty) until we use it.
+- Crypto keys are required: an invoice for a taxpayer without crypto keys ends `check_failed` (one NRS environment per deployment since 2026-11-13).
 - QR (§4.4) is built when the signed result arrives (journey `qr_generated`).
-- Result webhook: `invoice.cleared`, `invoice.failed`, `invoice.delivery_updated`, signed with a per-key webhook secret (Vault `secret/si/clients/{client_id}/webhooks/{key_id}`, shown once when a key gets a webhook URL); retried 1, 5, 15, 30 min, journey `webhook_sent` / `webhook_failed`.
+- Result webhook: `invoice.cleared`, `invoice.failed`, `invoice.delivery_updated`, signed with a per-key webhook secret (stored encrypted on the key row since 2026-11-13/16, shown once when a key gets a webhook URL); retried 1, 5, 15, 30 min, journey `webhook_sent` / `webhook_failed`.
 - `GET /v1/codes`, `GET /v1/codes/{name}` (ETag); `POST /v1/invoices/bulk` (up to 100, each on its own).
 - Client sign-up: `POST /v1/clients` for keys with `can_create_clients` (Support sets it on the portal's key, `POST /admin/v1/credentials/{id}/permissions`); the new client is approved at once (Muhammad: a business must hand us its taxpayers' NRS keys anyway).
 
@@ -207,31 +208,30 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 - SQLAlchemy 2 + Alembic (one migration history per service), PostgreSQL 16
 - Redis + **arq** for background jobs (BullMQ was considered earlier but is Node-only)
 - Transactional **outbox** table in each DB + a relay that publishes to the queue
-- HashiCorp Vault for all secrets (dev mode on the Mac; a sealed, file-backed Vault in Docker on the server: §6a)
+- Secrets: each service's root-only `.env` on the server (our NRS keys, service keys, token secrets, encryption key); taxpayers' keys in the databases, encrypted (`DATA_ENCRYPTION_KEYS`). Vault was used until 2026-11-13, removed for its manual upkeep (unsealing, monthly token renewals)
 - httpx for NRS calls; respx to mock NRS in tests
 - `cryptography` (RSA PKCS#1 v1.5) and `qrcode` for QR
 - pytest, ruff, mypy, pre-commit; Docker Compose for local stack; GitHub Actions CI
 - Later: Prometheus metrics, Grafana, Locust for load tests
 - Hosting must be in a Nigerian data centre (NITDA licence condition). Do not add any service that stores data outside Nigeria. **Open (2026-11-06):** the test set-up uses Neon (London) and Render (abroad) for test data only; production hosting must satisfy this rule before any real taxpayer data.
 
-### 6a. Servers, hosting and secrets (test server, 2026-11-06)
+### 6a. Servers, hosting and secrets (production server since 2026-11-12; no Vault since 2026-11-13)
 
-- **Server** `165.232.110.175` (Ubuntu, Docker): SI API :8001 + SI worker (`einvoice-si`, `compose.si.yaml`), APP API :8002 + APP worker (`einvoice-app`, `compose.app.yaml`), Vault (`deploy/vault/` in the SI repo). They share the private Docker network `einvoice` (`vault:8200`, `si:8001`, `app:8002`). Images install exactly `uv.lock` (incl. `einvoice-nrs` at a pinned commit), run as a non-root user, never contain `.env`.
-- **Databases:** Neon, one project per service; our databases `si` and `app` with `*_owner` (migrations), `*_runtime` (the service), `*_support_reader` (Support views). Encrypted (`POSTGRES_SSLMODE=require`), direct host (no pooler). Neon's `neondb_owner` is used only for set-up.
-- **NRS on the server:** the fake NRS on Render (`einvoice-nrs/render.yaml`, identifies itself at `GET /fake-nrs`) or the NRS sandbox; chosen by `NRS_BASE_URL` + `NRS_VAULT_PATH` in both services' `.env`.
-- **Vault security:** file storage on a Docker volume; no published port (reachable only on the `einvoice` network); starts **sealed** after every restart and is unsealed by a person with 2 of 3 unseal keys; unseal keys and the root token live in a password manager (never chat, email, git), the root token is logged out after admin work; one token per service with a least-privilege policy (SI: read `nrs/*` + `app/si-client`, own `si/*`; APP: read `nrs/*` + `si/app-client`, own `app/*`). SI ↔ APP keys: the secret only in Vault, the checking side keeps a one-way hash. **Vault is the only source of keys**: no `.env` fallback (removed 2026-11-06 after it caused two outages).
+- **Server** `138.68.159.228` (DigitalOcean, London; Ubuntu 26.04, 4 vCPU, 32 GB). nginx (behind Cloudflare) serves `https://si.sciang.com` → SI on 127.0.0.1:8001 and `https://ap.sciang.com` → APP on 127.0.0.1:8002. Each service: an API and 6 worker copies (`compose.si.yaml`, `compose.app.yaml`), `WORKER_CONCURRENCY` jobs per copy. Private Docker network `einvoice` (`si:8001`, `app:8002`, `einvoice-postgres:5432`). Images install exactly `uv.lock`, run as a non-root user, never contain `.env`.
+- **Databases:** Postgres 16 on the server (container `einvoice-postgres`, `einvoice-pgbouncer` in front): `si_db` and `ap_db`, each with `*_owner` (migrations), `*_runtime` (the service), `*_support_reader` (Support views). Not published, except nginx's port 5432 for one outside address (209.97.136.86). Adminer only through an SSH tunnel.
+- **NRS:** the NRS sandbox (`NRS_BASE_URL`) until NRS issues production keys. Load tests use the fake NRS (`einvoice-nrs`), never the sandbox.
+- **Auth between parties:** key + secret (Argon2-hashed by the checking side) exchanged once for a 15-minute HS256 bearer token (`/v1/token` on SI and APP, `/internal/v1/token` on the SI; `SI_JWT_SECRET`, `APP_JWT_SECRET`). Tokens are stateless: revoking a key or suspending a client bites within 15 minutes (accepted by Muhammad, 2026-11-16). Admin APIs keep key + secret on every call.
+- **Secrets:** each service's root-only `.env` (and the password manager): `NRS_API_KEY/SECRET` (our SI key), `NRS_APP_API_KEY/SECRET` (APP only, transmit), `APP_CLIENT_KEY/SECRET` (SI → APP), `SI_INTERNAL_KEY/SECRET` (APP → SI; the SI keeps the hash), the token secrets, `DATA_ENCRYPTION_KEYS`, database passwords, admin key hashes. Taxpayers' keys and webhook secrets: in the databases, encrypted.
 - **Renewals and rotation:**
 
 | What | When | How |
 | --- | --- | --- |
-| Service Vault tokens (SI, APP) | **Monthly** (they expire after 32 days) | `vault token renew` with each token (runbook) |
-| Vault unseal keys / root token | When a holder leaves, or on suspicion | `vault operator rekey` / `vault operator generate-root`, then revoke the old root token |
-| SI ↔ APP link keys | Yearly, on any leak, or when a link breaks | Re-run `link_our_si.py` (APP) / `link_our_app.py --new-internal-key` (SI); old key revoked at once |
+| `DATA_ENCRYPTION_KEYS` | On suspicion | New key first (`NEW,OLD`), recreate; drop OLD once nothing uses it |
+| Token secrets | Yearly or on a leak | Replace, recreate (callers re-mint after a 401) |
+| SI ↔ APP service keys | Yearly, on a leak, or when a link breaks | `link_our_si.py` (APP) / `link_our_app.py` (SI); both `.env`, recreate |
 | Support admin keys | When staff change, or yearly | `admin_keys`, update `.env`, give Support the new pair |
-| Neon role passwords | Yearly or on any leak | `ALTER ROLE … PASSWORD` as `neondb_owner`, update `.env`, `up -d` |
-| Neon `neondb_owner` | After set-up and after any exposure | Reset in the Neon console |
-| NRS keys (ours, taxpayers', sandbox) | When NRS or the business issues new ones | New pair into Vault; services reload within 5 minutes |
-| Fake NRS key pair | On exposure | Change in Render and Vault together |
+| Database passwords | Yearly or on a leak | `ALTER ROLE … PASSWORD`, update `.env`, recreate |
+| NRS keys (ours, taxpayers') | When NRS or the business issues new ones | Ours: `.env`, recreate. Taxpayers': the client sends them again |
 
 - How it all works: `docs/server-explained.md` (SI repo); every command: `docs/server-runbook.md`.
 
@@ -239,18 +239,18 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 
 ## 7. Data model (agreed draft — confirm with the user before the first migration of each table)
 
-Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `numeric` (never float; use `decimal.Decimal` in code); secrets never in tables (vault paths only); enums as Postgres enums or check constraints.
+Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `numeric` (never float; use `decimal.Decimal` in code); secrets in tables only encrypted (`EncryptedText`, `DATA_ENCRYPTION_KEYS`; since 2026-11-16); enums as Postgres enums or check constraints.
 
 ### 7.1 SI database
 
 **clients** — applications (portal, ERP, POS…): id, name, contact_email, status (pending, approved, suspended, soft_deleted), created_at, updated_at
 
-**client_credentials**: id, client_id → clients, api_client_key (unique, public id), api_secret_hash, webhook_url, webhook_secret_ref (vault path), status (active, revoked), expires_at, created_at, updated_at
+**client_credentials**: id, client_id → clients, api_client_key (unique, public id), api_secret_hash, webhook_url, webhook_secret_ref (the webhook secret, encrypted), status (active, revoked), expires_at, created_at, updated_at
 
 **client_taxpayers** — businesses: id, client_id → clients, taxpayer_tin, taxpayer_name, nrs_business_id (uuid), nrs_service_id (char 8), email, phone, street_name, city_name, postal_zone, state_code, lga_code, country_code (default NG), status (pending, authorized, suspended, soft_deleted), created_at, updated_at; unique (client_id, taxpayer_tin); **+ nrs_key_mode** (own_keys, our_si; default own_keys, existing rows our_si) — approved 2026-11-06
 - The same TIN may exist under two clients for V1 (keys stored per row). Possible later change: one row per TIN + a link table.
 
-**taxpayer_nrs_credentials** — pointers to a taxpayer's keys in Vault: id, taxpayer_id → client_taxpayers, kind (crypto_keys, **nrs_api_key**), source (nrs_dashboard, **client_api**), vault_path, key_fingerprint, environment (sandbox, production), status (active, revoked), stored_by (support staff id; **now optional**, old rows only), **stored_by_client_id** (→ clients), **verified_at**, replaced_by (nullable self-FK), created_at, updated_at; **one active key per (taxpayer, kind, environment)** — changes approved 2026-11-06, built in 6a/6b
+**taxpayer_nrs_credentials** — a taxpayer's keys: id, taxpayer_id → client_taxpayers, kind (crypto_keys, nrs_api_key), source (nrs_dashboard, client_api), key_material (the crypto_keys.txt text, or `{api_key, api_secret}` JSON; **encrypted**; was `vault_path` until 2026-11-13), key_fingerprint, status (active, revoked), stored_by (support staff id; old rows only), stored_by_client_id (→ clients), verified_at, replaced_by (nullable self-FK), created_at, updated_at; **one active key per (taxpayer, kind)** (`environment` dropped 2026-11-13)
 
 **item_mappings**: id, taxpayer_id, client_item_code, description, line_type (goods, service), hsn_code?, product_category?, isic_code?, service_category?, tax_category_id, price_unit, created_at, updated_at; unique (taxpayer_id, client_item_code)
 
@@ -267,7 +267,7 @@ Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `nume
 
 **payment_events**: id, invoice_id, status (PARTIAL, PAID, REJECTED), amount? (required for PARTIAL), reference, source (client_api, portal, support), nrs_sync_status (pending, synced, failed), nrs_synced_at?, created_at
 
-**outbox**: id, event_type, aggregate_id, payload (jsonb), published_at?, created_at
+**outbox**: id, event_type, aggregate_id, payload (jsonb), published_at?, queue_at (when its invoice arrived: the workers take the oldest invoice first; 2026-11-12), created_at
 
 **admin_audit_log** — append-only, one row per admin API call (never updated or deleted; app role has INSERT/SELECT only): id, actor_id (support staff id, as asserted by the Support platform), actor_ip?, action (e.g. crypto_keys.stored, invoice.retried, client.suspended, credential.revoked), resource_type, resource_id, request_id, outcome (success, failure), details (jsonb, secrets redacted), created_at
 - Invoice-related admin actions also add an `admin_action` row to `invoice_journey`, so the invoice's history shows them.
@@ -276,7 +276,9 @@ Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `nume
 
 **clients**, **client_credentials** — same shape as SI (clients here include our SI and external SIs).
 
-**client_taxpayers** (allowed TINs per client, needed for Path B): id, client_id, taxpayer_tin, status (active, suspended), created_at, updated_at; unique (client_id, taxpayer_tin)
+**client_taxpayers** (allowed TINs per client, Path B; enforced since 2026-11-16 for every SI but ours): id, client_id, taxpayer_tin, status (active, suspended), created_at, updated_at; unique (client_id, taxpayer_tin)
+
+**taxpayer_nrs_keys** (approved by Muhammad 2026-11-16) — the taxpayers' own NRS keys, handed over by their SI: id, client_id → clients, taxpayer_tin, tin_key (generated: letters and digits only), fingerprint (SHA-256 of the API key), key_material (`{api_key, api_secret}`, **encrypted**), status (active, revoked), created_at, updated_at; one active key per (client_id, tin_key)
 
 **invoice_journey** (was `transmissions`) — append-only: id, client_id, source (our_si, external_si), taxpayer_tin, taxpayer_ref? (SI taxpayer id, no FK), irn, direction (outbound, inbound), counterparty_tin, event, status (queued, validating, signing, signed, transmitting, transmitted, acknowledged, failed), operation? (validate, sign, lookup, transmit, acknowledge, pull), idempotency_key?, attempt_no?, http_status?, error_code?, error_message?, next_attempt_at?, inbound_payload?, details (jsonb), created_at
 - Enforce idempotency with a partial unique index on (idempotency_key) for the accepting event. Current state = latest row per (irn, direction).
@@ -310,7 +312,7 @@ Hard-coded in `shared/`, not in a table:
 
 **Security (non-negotiable)**
 - Never log, print, return or commit secrets, keys, certificates or full NRS responses containing them. Redact in logs.
-- Secrets live only in Vault (local: Vault dev mode; server: §6a). Config holds vault paths, never values. Keys are never read from `.env` as a fallback. No secrets in `.env` committed to git; commit `.env.example` / `.env.server.example` only.
+- Secrets: on the server only, in each service's root-only `.env` and the password manager (§6a); taxpayers' keys and webhook secrets in the databases only encrypted. No secrets in git: commit `.env.example` / `.env.server.example` only. (Vault until 2026-11-13.)
 - Client secrets: store only a strong hash (argon2/bcrypt); compare in constant time.
 - Outgoing webhooks to clients are HMAC-signed.
 - Every request is scoped: a client may only touch its own taxpayers and invoices.
