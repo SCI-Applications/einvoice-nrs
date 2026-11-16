@@ -64,16 +64,15 @@ Source: NRS developer docs (einvoice.nrs.gov.ng, API v1.1), the NRS Postman coll
 | Keys | Owner | Where stored | Used for |
 | --- | --- | --- | --- |
 | Taxpayer's own `x-api-key` + `x-api-secret` | **Each taxpayer**, issued to the business by NRS. **Primary option (NRS confirmed, 2026-11-06)** | SI database, encrypted (`taxpayer_nrs_credentials`), and the APP's encrypted copy (`taxpayer_nrs_keys`); never in chat | That taxpayer's NRS calls (IRN validate, validate, sign, confirm, update) |
-| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Each service's `.env` (`NRS_API_KEY/SECRET`) | **Secondary option**: taxpayers that enable us as their SI on NRS instead of giving their own key; also our own SI-level calls |
+| `x-api-key` + `x-api-secret` (SI) | **Us**, issued by NRS | Not used since 2026-11-16 (Muhammad: only taxpayers' own keys) | The `our_si` option (taxpayers enabling us as their SI) was removed; kept here for the record |
 | APP keys | **Us**, as APP | The APP's `.env` (`NRS_APP_API_KEY/SECRET`) | transmit, acknowledge, lookup, pull, self-health-check. **Separate from SI/taxpayer keys:** the sandbox refuses all transmit calls with the test business's key (403 "user does not have access to this resource", 2026-11-06). We have no APP access yet: **ask NRS** |
-| Crypto keys (RSA public key + certificate) | **Each taxpayer**; sent by the client that holds the taxpayer (e.g. the business portal) **together with the taxpayer's NRS API keys**, never by Support (Muhammad, 2026-11-06). For `our_si` taxpayers the client sends the crypto keys alone | SI database, encrypted (`taxpayer_nrs_credentials`) | Building that taxpayer's QR code |
+| Crypto keys (RSA public key + certificate) | **Each taxpayer**; sent by the client that holds the taxpayer (e.g. the business portal) **together with the taxpayer's NRS API keys**, never by Support (Muhammad, 2026-11-06). | SI database, encrypted (`taxpayer_nrs_credentials`) | Building that taxpayer's QR code |
 | `api_client_key` + secret | **Our clients**, issued by us | Only a hash in `client_credentials` | Clients calling our API |
 
 Rules:
 - Every NRS request sends `x-api-key` and `x-api-secret` headers. (Some NRS help articles mention OAuth 2.0; the live API and Postman use keys. Build on keys.)
-- Which key a call uses follows the taxpayer's `nrs_key_mode` (§5, "Taxpayer intake and keys"): `own_keys` → the taxpayer's own key; `our_si` → our SI key. No active key → the invoice stops with a clear error.
-- Our SI key can act for every taxpayer that enabled us, so **before every NRS call, our code must check the `business_id` belongs to an `authorized` taxpayer under the calling client**, whichever key is used. Never rely on NRS to enforce this.
-- `our_si` only: a business authorises us on the NRS side; it then appears under **Approved Businesses** on our NRS SI dashboard. Exactly where the business does this (its own MBS dashboard?) is **(confirm)**.
+- Every NRS call for a taxpayer (IRN check, validate, sign, payment updates) uses **that taxpayer's own key** (Muhammad, 2026-11-16: the `our_si` mode was removed). Transmit uses our APP key. No active key → the invoice stops with a clear error.
+- **Before every NRS call, our code checks the `business_id` belongs to an `authorized` taxpayer under the calling client.** Never rely on NRS to enforce this.
 
 ### 4.1a Our NRS SI dashboard (sandbox)
 - Status: onboarded, approved and integrated as a System Integrator (2 Oct 2026). Production access requires a **walkthrough demo** booked from the dashboard ("Schedule a demo"); production keys come after approval.
@@ -147,8 +146,8 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 2. SI stores the invoice (payload + columns + lines + tax subtotals, one transaction), journey `received`.
 3. Local checks: required fields, NRS codes (hard-coded lists), Decimal maths. Fail → `check_failed` with clear errors; nothing goes to NRS.
 4. Generate IRN, call `irn/validate`.
-5. SI writes an outbox event; relay sends it to the APP gateway (internal client key, `source = our_si`).
-6. APP workers: `validate`, then `sign` with **the taxpayer's own NRS key** (`own_keys`: the key its SI handed the APP, §5 taxpayer intake) or **our SI key** (`our_si`). On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
+5. SI writes an outbox event; its worker hands the invoice to the APP (our SI's APP key, as a bearer token).
+6. APP workers: `validate`, then `sign` with **the taxpayer's own NRS key** (the key its SI handed the APP, §5 taxpayer intake). On timeout, call `confirm` before any retry — never sign the same IRN twice. Retries with backoff; after max retries → `dead` (support retries manually).
 7. APP returns the signed result to the SI (outbox). SI stores the exact signed text (`signed_payload_raw`) + SHA-256, builds the QR from the taxpayer's crypto keys, returns IRN + QR to the client (webhook signed with HMAC, plus a GET endpoint).
 8. APP transmits to the buyer (B2B/B2G only) and follows the delivery by **polling** `transmit/lookup` (after 1, 5, 15, 30 min, 1, 2, 4, 8, 16 h; built 2026-11-06), recording each step; each change goes to the SI as a delivery update (SI journey `delivery_updated`, the client's `status.delivery`). Webhooks later, once the APP has a public HTTPS address; they would still be checked with a lookup. Transmit and lookups use **our APP key** (`NRS_APP_API_KEY`), the only thing our APP key is used for; NRS refuses them with SI/taxpayer keys (403, sandbox 2026-11-06). Without the APP key, B2B/B2G invoices stay `signed` and wait.
 9. Payment updates: SI → NRS `PATCH /invoice/update/{IRN}` directly (not via the APP), from the SI worker with the taxpayer's key, logged in the SI journey (built 2026-11-10: `POST /v1/invoices/{id}/payments`).
@@ -156,41 +155,35 @@ Schema changes: NRS publishes changes as optional for 3 months, then enforced. A
 ### Path B — external SI (built 2026-11-13/16)
 Onboarded by Support (API key, allowed TINs). Sends an NRS v1.1 invoice + IRN with an idempotency key, exactly like our SI. Since 2026-11-13 the APP accepts any approved SI; since 2026-11-16 (Muhammad):
 - An SI other than ours may send only for the TINs on its allowed list (`client_taxpayers`, managed by Support): 403 at intake and for keys; the worker re-checks before calling NRS. Our SI (`OUR_SI_CLIENT_ID`) checks its own taxpayers and is not limited by the list.
-- `own_keys` invoices are signed with the taxpayer's own key, which that SI hands the APP (`PUT /v1/taxpayers/{tin}/nrs-key`); `our_si` invoices with our SI key.
-**(confirm with NRS)** whether we may sign an external SI's `our_si` invoices with our SI key.
+- Every invoice is signed with the seller's own key, which that SI hands the APP (`PUT /v1/taxpayers/{tin}/nrs-key`); 409 until the APP holds it.
 
 ### Taxpayer intake and keys (design approved by Muhammad, 2026-11-06; built in 6a/6b)
 
 NRS confirmed (2026-11-06) that **taxpayers provide their own NRS API keys**: the primary option. Enabling us as their SI stays as the secondary option. Support never stores or sees keys.
 
-**Two modes per taxpayer** (`client_taxpayers.nrs_key_mode`, chosen when the client registers it):
-
-| Mode | NRS key used | How the taxpayer becomes `authorized` |
-| --- | --- | --- |
-| `own_keys` (default) | The taxpayer's own NRS key + secret, sent by its client | The SI checks the key with one harmless NRS call; accepted → `authorized` at once, outbox `taxpayer.authorized` |
-| `our_si` | Our SI key (the business enables us as its SI on NRS) | Support runs `verify` (`/entity` must show the same TIN), as today |
+**One mode only (Muhammad, 2026-11-16):** every taxpayer acts on NRS with its **own** NRS key + secret, sent by its client with its crypto keys. The SI checks the key with one harmless NRS call; accepted → `authorized` at once, outbox `taxpayer.authorized`. The `our_si` mode (our SI key, Support's `verify`) and the dev-only `dev-authorize` were removed; migration `6f1d3b8a2c47` set former `our_si` taxpayers without their own key back to `pending`.
 
 **Client API (SI)** — the contract for the business portal:
 
 | Call | What it does |
 | --- | --- |
-| `POST /v1/taxpayers` + `nrs_key_mode` | `own_keys` (default) or `our_si` |
-| `PUT /v1/taxpayers/{id}/nrs-credentials` | Body `{api_key, api_secret, crypto_keys}` for `own_keys` (all required); `{crypto_keys}` for `our_si`. **Write-only**: never returned, never logged. The SI checks the NRS key with NRS, hands it to our APP, then stores it; the taxpayer is then `authorized` (`own_keys`). Sending again replaces the keys (old ones revoked). (The `environment` field was dropped on 2026-11-13: one NRS environment per deployment.) |
-| `DELETE /v1/taxpayers/{id}/nrs-credentials` | Revokes the keys (here and at the APP); an `own_keys` taxpayer goes back to `pending` |
-| `GET /v1/taxpayers/{id}` | Adds `nrs_key_mode` and, per key, `kind` (nrs_api_key, crypto_keys), `fingerprint`, `status`, `stored_at`, `verified_at`; never key material |
+| `POST /v1/taxpayers` | Registers the business (TIN, NRS business id, Service ID, contacts); `pending` |
+| `PUT /v1/taxpayers/{id}/nrs-credentials` | Body `{api_key, api_secret, crypto_keys}`, all required. **Write-only**: never returned, never logged. The SI checks the NRS key with NRS, hands it to our APP, then stores it; the taxpayer is then `authorized`. Sending again replaces the keys (old ones revoked). (The `environment` field was dropped on 2026-11-13: one NRS environment per deployment.) |
+| `DELETE /v1/taxpayers/{id}/nrs-credentials` | Revokes the keys (here and at the APP); the taxpayer goes back to `pending` |
+| `GET /v1/taxpayers/{id}` | Adds, per key, `kind` (nrs_api_key, crypto_keys), `fingerprint`, `status`, `stored_at`, `verified_at`; never key material |
 
 Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (NRS refused the key; taxpayer suspended), 502 (our APP refused the key) and 503 (NRS or our APP unavailable: try again); nothing is stored on any error.
 
 **Storage** (Vault removed 2026-11-13; encryption and the APP's copy added 2026-11-16, Muhammad)
 - SI: taxpayer NRS keys and crypto keys in `taxpayer_nrs_credentials.key_material`, **encrypted** with the SI's `DATA_ENCRYPTION_KEYS` (Fernet, `common/secret_box.py`); fingerprints and dates beside them.
-- APP: each `own_keys` taxpayer's NRS key in `taxpayer_nrs_keys` (§7.2), encrypted with the APP's own `DATA_ENCRYPTION_KEYS`, per SI and TIN. The SI hands it over when the client sends it (`PUT /v1/taxpayers/{tin}/nrs-key` on the APP, over the private network with a service token); keys stored before that are sent once with `scripts/sync_taxpayer_keys.py`. The APP refuses an `own_keys` invoice (409) until it holds the key.
-- Hand-over to the APP carries `taxpayer_ref` (SI taxpayer id) and `nrs_key_mode`; the APP finds the key by SI and seller TIN.
+- APP: each taxpayer's NRS key in `taxpayer_nrs_keys` (§7.2), encrypted with the APP's own `DATA_ENCRYPTION_KEYS`, per SI and TIN. The SI hands it over when the client sends it (`PUT /v1/taxpayers/{tin}/nrs-key` on the APP, over the private network with a service token); keys stored before that are sent once with `scripts/sync_taxpayer_keys.py`. The APP refuses an invoice (409) until it holds the seller's key.
+- Hand-over to the APP carries `taxpayer_ref` (SI taxpayer id); the APP finds the key by SI and seller TIN.
 - One small function in each service picks the key for every NRS call. The `business_id` ↔ authorized-taxpayer check (§4.1) stays, whichever key is used.
 
 **Open before building:** (1) ~~which harmless NRS call proves a taxpayer key works~~ answered: `irn/validate`, see "Built" (`/entity` answered 403 to the test business's own key; candidates `GET /invoice/{business_id}` and `irn/validate` with a dummy IRN; to probe in the sandbox); (2) whether production keys are issued separately from sandbox keys; (3) ~~which key a transmit uses~~ our APP key (answered by the sandbox, 2026-11-06).
 
 **Built (Mon 9 Nov, blocks 6a + 6b; contracts approved by Muhammad the same day):**
-- `nrs_key_mode`, `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref` + `nrs_key_mode`); (Vault then; since 2026-11-16 the APP's encrypted copy, §5 Storage). The admin `crypto-keys` endpoint is gone; local and dev keep `dev-authorize`.
+- `PUT`/`DELETE nrs-credentials` and fingerprints on `GET` (SI); the APP validates and signs with the taxpayer's key (hand-over carries `taxpayer_ref`); (Vault then; since 2026-11-16 the APP's encrypted copy, §5 Storage). The admin `crypto-keys`, `verify` and `dev-authorize` endpoints are gone.
 - The key check is `irn/validate` with a made-up IRN: 401/403 = NRS refused the key, any other answer = the key works. **Confirmed in the sandbox (2026-11-09):** right key → 200, wrong secret → 401 "invalid auth credentials" (open item 1 answered).
 - crypto_keys.txt layout confirmed with the test business's file: JSON, `public_key` = base64 PEM (RSA-2048), `certificate` = 60-character base64.
 - **QR confirmed (2026-11-09):** a sandbox end-to-end QR (unix-time timestamp, certificate as in the file) passed the dashboard's "Validate IRN Signature" tool (§11 item 6 answered).
@@ -221,7 +214,7 @@ Errors: 422 (missing/malformed fields, or fields that don't fit the mode), 409 (
 - **Databases:** Postgres 16 on the server (container `einvoice-postgres`, `einvoice-pgbouncer` in front): `si_db` and `ap_db`, each with `*_owner` (migrations), `*_runtime` (the service), `*_support_reader` (Support views). Not published, except nginx's port 5432 for one outside address (209.97.136.86). Adminer only through an SSH tunnel.
 - **NRS:** the NRS sandbox (`NRS_BASE_URL`) until NRS issues production keys. Load tests use the fake NRS (`einvoice-nrs`), never the sandbox.
 - **Auth between parties:** key + secret (Argon2-hashed by the checking side) exchanged once for a 15-minute HS256 bearer token (`/v1/token` on SI and APP, `/internal/v1/token` on the SI; `SI_JWT_SECRET`, `APP_JWT_SECRET`). Tokens are stateless: revoking a key or suspending a client bites within 15 minutes (accepted by Muhammad, 2026-11-16). Admin APIs keep key + secret on every call.
-- **Secrets:** each service's root-only `.env` (and the password manager): `NRS_API_KEY/SECRET` (our SI key), `NRS_APP_API_KEY/SECRET` (APP only, transmit), `APP_CLIENT_KEY/SECRET` (SI → APP), `SI_INTERNAL_KEY/SECRET` (APP → SI; the SI keeps the hash), the token secrets, `DATA_ENCRYPTION_KEYS`, database passwords, admin key hashes. Taxpayers' keys and webhook secrets: in the databases, encrypted.
+- **Secrets:** each service's root-only `.env` (and the password manager): `NRS_APP_API_KEY/SECRET` (APP only, transmit; no other NRS key of ours is used), `APP_CLIENT_KEY/SECRET` (SI → APP), `SI_INTERNAL_KEY/SECRET` (APP → SI; the SI keeps the hash), the token secrets, `DATA_ENCRYPTION_KEYS`, database passwords, admin key hashes. Taxpayers' keys and webhook secrets: in the databases, encrypted.
 - **Renewals and rotation:**
 
 | What | When | How |
@@ -247,7 +240,7 @@ Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `nume
 
 **client_credentials**: id, client_id → clients, api_client_key (unique, public id), api_secret_hash, webhook_url, webhook_secret_ref (the webhook secret, encrypted), status (active, revoked), expires_at, created_at, updated_at
 
-**client_taxpayers** — businesses: id, client_id → clients, taxpayer_tin, taxpayer_name, nrs_business_id (uuid), nrs_service_id (char 8), email, phone, street_name, city_name, postal_zone, state_code, lga_code, country_code (default NG), status (pending, authorized, suspended, soft_deleted), created_at, updated_at; unique (client_id, taxpayer_tin); **+ nrs_key_mode** (own_keys, our_si; default own_keys, existing rows our_si) — approved 2026-11-06
+**client_taxpayers** — businesses: id, client_id → clients, taxpayer_tin, taxpayer_name, nrs_business_id (uuid), nrs_service_id (char 8), email, phone, street_name, city_name, postal_zone, state_code, lga_code, country_code (default NG), status (pending, authorized, suspended, soft_deleted), created_at, updated_at; unique (client_id, tin_key) and (client_id, nrs_business_id); `nrs_key_mode` (2026-11-06) dropped 2026-11-16: own keys only
 - The same TIN may exist under two clients for V1 (keys stored per row). Possible later change: one row per TIN + a link table.
 
 **taxpayer_nrs_credentials** — a taxpayer's keys: id, taxpayer_id → client_taxpayers, kind (crypto_keys, nrs_api_key), source (nrs_dashboard, client_api), key_material (the crypto_keys.txt text, or `{api_key, api_secret}` JSON; **encrypted**; was `vault_path` until 2026-11-13), key_fingerprint, status (active, revoked), stored_by (support staff id; old rows only), stored_by_client_id (→ clients), verified_at, replaced_by (nullable self-FK), created_at, updated_at; **one active key per (taxpayer, kind)** (`environment` dropped 2026-11-13)
@@ -280,7 +273,7 @@ Conventions: `id uuid` PK; `created_at`/`updated_at timestamptz`; money as `nume
 
 **taxpayer_nrs_keys** (approved by Muhammad 2026-11-16) — the taxpayers' own NRS keys, handed over by their SI: id, client_id → clients, taxpayer_tin, tin_key (generated: letters and digits only), fingerprint (SHA-256 of the API key), key_material (`{api_key, api_secret}`, **encrypted**), status (active, revoked), created_at, updated_at; one active key per (client_id, tin_key)
 
-**invoice_journey** (was `transmissions`) — append-only: id, client_id, source (our_si, external_si), taxpayer_tin, taxpayer_ref? (SI taxpayer id, no FK), irn, direction (outbound, inbound), counterparty_tin, event, status (queued, validating, signing, signed, transmitting, transmitted, acknowledged, failed), operation? (validate, sign, lookup, transmit, acknowledge, pull), idempotency_key?, attempt_no?, http_status?, error_code?, error_message?, next_attempt_at?, inbound_payload?, details (jsonb), created_at
+**invoice_journey** (was `transmissions`) — append-only: id, client_id, taxpayer_tin, taxpayer_ref? (SI taxpayer id, no FK), irn, direction (outbound, inbound), counterparty_tin, event, status (queued, validating, signing, signed, transmitting, transmitted, acknowledged, failed), operation? (validate, sign, lookup, transmit, acknowledge, pull), idempotency_key?, attempt_no?, http_status?, error_code?, error_message?, next_attempt_at?, inbound_payload?, details (jsonb), created_at
 - Enforce idempotency with a partial unique index on (idempotency_key) for the accepting event. Current state = latest row per (irn, direction).
 - Consider naming it `app_invoice_journey` in code to avoid confusion with the SI table.
 
