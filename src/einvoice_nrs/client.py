@@ -190,6 +190,8 @@ class NrsClient:
         return await self._call("POST", "/invoice/sign", content=signed_text)
 
     async def confirm(self, irn: str) -> Any:
+        """A signed invoice at NRS: payment_status, and after a transmit how far the delivery
+        got (entry_status, transmitted, delivered; sandbox 2026-11-19)."""
         return await self._call("GET", f"/invoice/confirm/{irn}")
 
     async def update_payment(
@@ -207,12 +209,13 @@ class NrsClient:
     # TODO(nrs-confirm): the success bodies of these calls (not seen yet in the sandbox).
 
     async def transmit(self, irn: str) -> Any:
-        """Ask NRS to deliver a signed invoice to the buyer's side. NRS answers at once; the
-        delivery itself is followed with transmit_lookup."""
+        """Ask NRS to deliver a signed invoice to the buyer's side. Only the seller's own Access
+        Point may (else 404 "access is denied"). The delivery is followed with confirm."""
         return await self._call("POST", f"/invoice/transmit/{irn}")
 
     async def transmit_lookup(self, irn: str) -> Any:
-        """Where a transmitted invoice is: TRANSMITTING, TRANSMITTED, ACKNOWLEDGED or FAILED."""
+        """Each party's Access Point for this invoice (app_reference, webhook set up, up); not
+        the delivery status, which is in confirm (sandbox 2026-11-19)."""
         return await self._call("GET", f"/invoice/transmit/lookup/{irn}")
 
     async def transmit_lookup_tin(self, tin: str) -> Any:

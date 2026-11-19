@@ -40,6 +40,15 @@ The history before 2026-11-05 is in the `einvoice-si` repo's `log.md` (renamed f
 4. In each service: change the `tag` (or `rev`) in `[tool.uv.sources]`, `uv lock`, test, PR.
 
 ---
+## 2026-11-19 — Fake NRS: delivery status in confirm, as in the sandbox (Muhammad)
+
+- Sandbox (2026-11-19, first transmit through our APP): `transmit/lookup/{irn}` answers each
+  party's Access Point (`accounting_supplier_party` / `accounting_customer_party`, with
+  `app_reference`), no status; `confirm/{irn}` answers `entry_status` (`NEW_ENTRY`,
+  `TRANSMITTED`, ...) with `transmitted` and `delivered`.
+- The fake now does the same: confirm steps through `transmit_steps` after a transmit; the
+  lookup answers the parties. Client docstrings say so. Tests: 24 passed.
+
 ## 2026-11-10 — 0.3.2: payment updates
 
 - `NrsClient.update_payment(irn, payment_status, reference, amount?)` → `PATCH /invoice/update/{IRN}`; the fake answers it (only for IRNs it signed; PARTIAL needs an amount) and keeps them in `app.state.payments`. Probe `--payment-irn <signed IRN>` sends PARTIAL with and without an amount and a made-up status, then confirm. **To confirm:** the body field names.
