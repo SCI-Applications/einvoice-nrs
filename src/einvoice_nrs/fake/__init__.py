@@ -64,7 +64,7 @@ class Config(BaseModel):
     reject_irns: list[str] = Field(default_factory=list)
     failures: list[Failure] = Field(default_factory=list)
     delay_seconds: float = 0
-    # The transmit answer is the first step; each lookup then moves one step on (the last repeats).
+    # The transmit answer is the first step; each confirm then moves one step on (the last repeats).
     transmit_steps: list[str] = Field(
         default_factory=lambda: ["TRANSMITTING", "TRANSMITTED", "ACKNOWLEDGED"]
     )
@@ -107,7 +107,7 @@ def create_app(config: Config) -> FastAPI:
     failures = [f.model_copy() for f in config.failures]
     signed: set[str] = set()
     app.state.signed = signed  # for tests to inspect
-    transmissions: dict[str, int] = {}  # irn -> lookups answered so far
+    transmissions: dict[str, int] = {}  # irn -> confirms answered since the transmit
     app.state.transmissions = transmissions
     payments: dict[str, list[dict[str, Any]]] = {}  # irn -> payment updates received, in order
     app.state.payments = payments
@@ -206,11 +206,26 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/api/v1/invoice/confirm/{irn}")
     async def confirm(irn: str, request: Request) -> JSONResponse:
+        """As the sandbox answers (2026-11-19): the delivery status is here, in entry_status and
+        transmitted / delivered. After a transmit, each confirm moves one step on."""
         if failed := await gate(request, "confirm"):
             return failed
         if irn not in signed:
             return _error(404, "invoice not found")
-        return _ok({"irn": irn, "payment_status": "PENDING"})
+        entry = "NEW_ENTRY"
+        if irn in transmissions:
+            steps = config.transmit_steps
+            entry = steps[min(transmissions[irn], len(steps) - 1)]
+            transmissions[irn] += 1
+        done = entry in ("TRANSMITTED", "ACKNOWLEDGED")
+        return _ok(
+            {
+                "payment_status": "PENDING",
+                "entry_status": entry,
+                "transmitted": done,
+                "delivered": done,
+            }
+        )
 
     @app.patch("/api/v1/invoice/update/{irn}")
     async def update_payment(irn: str, request: Request) -> JSONResponse:
@@ -233,19 +248,19 @@ def create_app(config: Config) -> FastAPI:
             return failed
         if irn not in signed:
             return _error(404, "invoice not found or not signed")
-        transmissions.setdefault(irn, 1)  # the first lookup answers the next step
+        transmissions.setdefault(irn, 1)  # the first confirm answers the next step
         return _ok({"irn": irn, "status": config.transmit_steps[0]})
 
     @app.get("/api/v1/invoice/transmit/lookup/{irn}")
     async def transmit_lookup(irn: str, request: Request) -> JSONResponse:
+        """As the sandbox answers (2026-11-19): where each party's invoices go (its Access
+        Point), not how far the delivery got (that is confirm)."""
         if failed := await gate(request, "transmit_lookup"):
             return failed
-        if irn not in transmissions:
-            return _error(404, "transmission not found")
-        steps = config.transmit_steps
-        status = steps[min(transmissions[irn], len(steps) - 1)]
-        transmissions[irn] += 1
-        return _ok({"irn": irn, "status": status})
+        if irn not in signed:
+            return _error(404, "invoice not found")
+        party = {"app_reference": "fake-ap", "has_webhook_setup": True, "up": True}
+        return _ok({"accounting_supplier_party": party, "accounting_customer_party": party})
 
     @app.get("/api/v1/invoice/transmit/lookup/tin/{tin}")
     async def transmit_lookup_tin(tin: str, request: Request) -> JSONResponse:

@@ -127,7 +127,7 @@ def test_validate_sign_confirm() -> None:
             await nrs.sign(to_nrs_json(INVOICE))
         return await nrs.confirm(IRN)
 
-    assert run(flow)["irn"] == IRN
+    assert run(flow)["entry_status"] == "NEW_ENTRY"
 
 
 def test_fake_rejects_string_amounts() -> None:
@@ -219,19 +219,22 @@ def test_render_keys_replace_the_config_keys(monkeypatch: pytest.MonkeyPatch) ->
     assert load_config(DEFAULT_CONFIG).api_key == "fake-nrs-key"
 
 
-def test_transmit_then_lookups_step_through_delivery() -> None:
+def test_transmit_then_confirms_step_through_delivery() -> None:
     async def flow(nrs: NrsClient) -> list[Any]:
         await nrs.sign(to_nrs_json(INVOICE))
         accepted = await nrs.transmit(IRN)
-        steps = [(await nrs.transmit_lookup(IRN))["status"] for _ in range(4)]
-        return [accepted["status"], *steps]
+        confirms = [await nrs.confirm(IRN) for _ in range(4)]
+        route = await nrs.transmit_lookup(IRN)
+        assert "status" not in route  # the lookup says where invoices go, as in the sandbox
+        assert route["accounting_supplier_party"]["app_reference"] == "fake-ap"
+        return [accepted["status"], *((c["entry_status"], c["delivered"]) for c in confirms)]
 
     assert run(flow) == [
         "TRANSMITTING",
-        "TRANSMITTED",
-        "ACKNOWLEDGED",
-        "ACKNOWLEDGED",
-        "ACKNOWLEDGED",
+        ("TRANSMITTED", True),
+        ("ACKNOWLEDGED", True),
+        ("ACKNOWLEDGED", True),
+        ("ACKNOWLEDGED", True),
     ]
 
 
@@ -245,7 +248,7 @@ def test_transmit_needs_a_signed_invoice_and_can_fail() -> None:
     async def lookup_unknown(nrs: NrsClient) -> None:
         await nrs.transmit_lookup(IRN)
 
-    with pytest.raises(NrsRejectedError, match="transmission not found"):
+    with pytest.raises(NrsRejectedError, match="invoice not found"):
         run(lookup_unknown)
 
     async def outage(nrs: NrsClient) -> Any:
